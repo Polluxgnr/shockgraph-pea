@@ -31,3 +31,4 @@ pytest-cov>=5.0
 pylint>=3.3
 black>=24.8
 pre-commit>=3.8
+black==26.10.1  # same version as the pre-commit hook (.pre-commit-config.yaml)
