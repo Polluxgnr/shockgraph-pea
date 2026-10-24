@@ -7,7 +7,7 @@ The video walks through this table from top to bottom.
 | --- | --- | --- | --- | --- |
 | 2 | docker-compose ≥ 3 services | `docker-compose.yml` (neo4j, api, nginx, ollama) | B | [ ] |
 | 2 | Dockerfile / official images | `Dockerfile` | B | [ ] |
-| 2 | `.env.example`, no secret committed | `.env.example`, hooks, gitleaks in CI | A | [ ] |
+| 2 | `.env.example`, no secret committed | `.env.example`, hooks, detect-secrets in CI | A | [ ] |
 | 2 | Image on a public registry | `ghcr.io/polluxgnr/shockgraph-api` | B | [ ] |
 | 1 | Compose starts cleanly | `make docker-run` | B | [ ] |
 | 3 | ≥ 3 labels, ≥ 3 relationship types | `docs/schema.md` | A | [ ] |
