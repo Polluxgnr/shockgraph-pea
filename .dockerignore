@@ -1,0 +1,15 @@
+.git
+.github
+.venv
+.env
+.env.*
+data/cache
+data/raw
+ml/artifacts
+docs
+tests
+*.ipynb
+**/__pycache__
+CLAUDE*.md
+AGENTS*.md
+.claude

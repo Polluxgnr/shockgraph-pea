@@ -1,0 +1,76 @@
+# Full stack: Nginx (public, port HTTP_PORT) -> API (internal) -> Neo4j + GDS, Ollama (local LLM).
+# Start with `make docker-run`, then pull the models once with `make llm-pull`.
+name: shockgraph
+
+services:
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: shockgraph-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?set NEO4J_PASSWORD in .env}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      NEO4J_PLUGINS: '["graph-data-science"]'
+      NEO4J_server_memory_heap_max__size: 2G
+      NEO4J_server_memory_pagecache_size: 1G
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$$NEO4J_PASSWORD\" 'RETURN 1' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 40s
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: shockgraph-ollama
+    volumes:
+      - ollama_models:/root/.ollama
+    ports:
+      - "11434:11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  api:
+    build: .
+    image: ${API_IMAGE:-ghcr.io/polluxgnr/shockgraph-api:latest}
+    container_name: shockgraph-api
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      OLLAMA_BASE_URL: http://ollama:11434
+    expose:
+      - "8000"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: shockgraph-nginx
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/nginx-health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  neo4j_data:
+  ollama_models:
