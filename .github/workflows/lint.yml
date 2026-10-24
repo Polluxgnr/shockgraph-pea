@@ -1,0 +1,34 @@
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: pylint (>= 9.5)
+        run: pylint app scripts ml --fail-under=9.5
+      - name: black
+        run: black --check app scripts ml tests
+      - name: commit messages of the PR
+        if: github.event_name == 'pull_request'
+        run: |
+          for sha in $(git rev-list --no-merges ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}); do
+            git log -1 --format=%B "$sha" > /tmp/msg
+            python -m scripts.hooks.check_commit_msg /tmp/msg || { echo "in commit $sha"; exit 1; }
+          done
+      - name: secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

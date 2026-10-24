@@ -1,0 +1,52 @@
+# Installed by `make install`. Runs on every commit; CI runs the same lint and tests on every PR.
+default_install_hook_types: [pre-commit, commit-msg]
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: no-commit-to-branch
+        args: [--branch, main]
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-added-large-files
+        args: [--maxkb=800]
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: https://github.com/psf/black
+    rev: 24.10.0
+    hooks:
+      - id: black
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]
+        exclude: ^tests/fixtures/
+
+  - repo: local
+    hooks:
+      - id: forbidden-files
+        name: no secrets, personal agent files or data
+        entry: scripts/hooks/run.sh -m scripts.hooks.check_forbidden_files
+        language: script
+        pass_filenames: true
+      - id: file-ownership
+        name: only touch the files of your role
+        entry: scripts/hooks/run.sh -m scripts.hooks.check_ownership
+        language: script
+        pass_filenames: false
+        always_run: true
+      - id: pylint
+        name: pylint (staged files)
+        entry: scripts/hooks/run.sh -m pylint --fail-under=9.5
+        language: script
+        types: [python]
+        files: ^(app|scripts|ml)/
+      - id: commit-msg
+        name: conventional commit, no tool attribution
+        entry: scripts/hooks/run.sh -m scripts.hooks.check_commit_msg
+        language: script
+        stages: [commit-msg]

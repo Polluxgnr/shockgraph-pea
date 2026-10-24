@@ -1,0 +1,38 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      neo4j:
+        image: neo4j:5.26-community
+        env:
+          NEO4J_AUTH: neo4j/testpassword
+          NEO4J_PLUGINS: '["graph-data-science"]'
+        ports:
+          - 7688:7687
+    env:
+      NEO4J_TEST_URI: bolt://localhost:7688
+      NEO4J_TEST_PASSWORD: testpassword
+      LLM_PROVIDER: fake
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: wait for Neo4j
+        run: python -m scripts.dev.wait_neo4j --uri bolt://localhost:7688 --password testpassword --timeout 240
+      - name: pytest with coverage (>= 60 %)
+        run: pytest --cov --cov-report=term-missing --cov-report=xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage.xml
