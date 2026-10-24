@@ -48,6 +48,7 @@ OWNERS: dict[str, list[str]] = {
         ".github/pull_request_template.md",
         ".github/ISSUE_TEMPLATE/*",
         ".gitignore",
+        ".gitattributes",
         ".pylintrc",
         ".pre-commit-config.yaml",
         ".secrets.baseline",

@@ -1,0 +1,5 @@
+# Same line endings for everyone (Windows checkouts included): shell scripts break with CRLF.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.xlsx binary
