@@ -1,4 +1,4 @@
-# Role B: API, Docker, performance (Eliott, `tiltoee`)
+# Role B: API, Docker, performance (Eliott, `Tiltoe`)
 
 Read `AGENTS.md` first. You own the company, factor, portfolio and shock services, the API layer, the
 containers, the benchmarks and the agent evaluation. Your PRs are reviewed by **a** (`Polluxgnr`); you
