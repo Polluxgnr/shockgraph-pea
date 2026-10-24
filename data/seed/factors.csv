@@ -1,0 +1,13 @@
+code,name,kind,unit,source,source_id
+BRENT,Brent crude oil,commodity,USD/bbl,yahoo,BZ=F
+WTI,WTI crude oil,commodity,USD/bbl,yahoo,CL=F
+NATGAS_EU,Dutch TTF natural gas,commodity,EUR/MWh,yahoo,TTF=F
+COPPER,Copper,commodity,USD/lb,yahoo,HG=F
+GOLD,Gold,commodity,USD/oz,yahoo,GC=F
+ALUMINIUM,Aluminium,commodity,USD/t,yahoo,ALI=F
+WHEAT,Wheat,commodity,USc/bu,yahoo,ZW=F
+EURUSD,Euro / US dollar,currency,USD per EUR,yahoo,EURUSD=X
+EURCNY,Euro / Chinese yuan,currency,CNY per EUR,yahoo,EURCNY=X
+EURGBP,Euro / British pound,currency,GBP per EUR,yahoo,EURGBP=X
+US10Y,US 10-year Treasury yield,rate,%,fred,DGS10
+EUR10Y,Euro area 10-year AAA yield,rate,%,ecb,YC/B.U2.EUR.4F.G_N_A.SV_C_YM.SR_10Y
