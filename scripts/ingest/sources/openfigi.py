@@ -151,4 +151,6 @@ class OpenFigiClient:
         """Persist the cache after each batch so an interrupted run resumes."""
         if self.cache_path:
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-            self.cache_path.write_text(json.dumps(self.cache), encoding="utf-8")
+            temporary = self.cache_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(self.cache), encoding="utf-8")
+            temporary.replace(self.cache_path)  # atomic: an interrupted run never leaves half a file
