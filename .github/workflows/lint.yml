@@ -23,7 +23,7 @@ jobs:
         run: black --check app scripts ml tests
       - name: commit messages of the PR
         if: github.event_name == 'pull_request'
-        run: |  # pragma: allowlist secret
+        run: |
           for sha in $(git rev-list --no-merges ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}); do
             git log -1 --format=%B "$sha" > /tmp/msg
             python -m scripts.hooks.check_commit_msg /tmp/msg || { echo "in commit $sha"; exit 1; }
@@ -31,4 +31,4 @@ jobs:
       - name: leaked credentials scan (same scanner and baseline as the pre-commit hook)
         run: |  # pragma: allowlist secret
           pip install detect-secrets==1.5.0
-          git ls-files -z -- . ':!tests/fixtures/*' | xargs -0 detect-secrets-hook --baseline .secrets.baseline  # pragma: allowlist secret
+          git ls-files -z -- . ':!tests/fixtures/*' | xargs -0 detect-secrets-hook --baseline .secrets.baseline
