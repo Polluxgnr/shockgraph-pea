@@ -1,0 +1,27 @@
+[project]
+name = "shockgraph-pea"
+version = "0.1.0"
+description = "Graph of PEA stocks, sectors, commodities and macro factors, with a local LangGraph agent"
+requires-python = ">=3.11"
+
+[tool.black]
+line-length = 120
+target-version = ["py311"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "neo4j: needs the test database (make test-db), skipped otherwise",
+    "gds: needs the GDS plugin in the test database",
+    "containers: needs the full stack running (make docker-run)",
+]
+
+[tool.coverage.run]
+source = ["app", "scripts", "ml"]
+omit = ["scripts/dev/*", "scripts/hooks/*"]
+
+[tool.coverage.report]
+fail_under = 60
+show_missing = true
+skip_covered = true
