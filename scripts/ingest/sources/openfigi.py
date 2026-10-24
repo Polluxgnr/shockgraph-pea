@@ -130,7 +130,7 @@ class OpenFigiClient:
         return {isin: self.cache.get(isin, []) for isin in isins}
 
     def _post(self, http: httpx.Client, jobs: list[dict]) -> list[dict]:
-        """POST one batch, waiting and retrying when rate-limited or on a network timeout."""
+        """POST one batch, retrying on rate limits, server errors and timeouts."""
         for attempt in range(5):
             try:
                 response = http.post(URL, json=jobs)
@@ -139,6 +139,9 @@ class OpenFigiClient:
                 continue
             if response.status_code == 429:
                 time.sleep(int(response.headers.get("ratelimit-reset", "30")) + 1)
+                continue
+            if response.status_code >= 500:
+                time.sleep(10 * (attempt + 1))
                 continue
             response.raise_for_status()
             return response.json()
