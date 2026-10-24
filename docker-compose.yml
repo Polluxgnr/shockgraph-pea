@@ -8,17 +8,18 @@ services:
     container_name: shockgraph-neo4j
     environment:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?set NEO4J_PASSWORD in .env}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
       NEO4J_PLUGINS: '["graph-data-science"]'
-      NEO4J_server_memory_heap_max__size: 2G
-      NEO4J_server_memory_pagecache_size: 1G
+      NEO4J_server_memory_heap_max__size: ${NEO4J_HEAP:-1G}
+      NEO4J_server_memory_pagecache_size: ${NEO4J_PAGECACHE:-512M}
     ports:
       - "7474:7474"
       - "7687:7687"
     volumes:
       - neo4j_data:/data
+      - neo4j_plugins:/plugins
     healthcheck:
-      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$$NEO4J_PASSWORD\" 'RETURN 1' >/dev/null 2>&1"]
+      # Bolt port open = server started. Not cypher-shell: it boots a JVM (>10 s) and needs the password.
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/7687' || exit 1"]
       interval: 10s
       timeout: 10s
       retries: 20
@@ -73,4 +74,5 @@ services:
 
 volumes:
   neo4j_data:
+  neo4j_plugins:
   ollama_models:
