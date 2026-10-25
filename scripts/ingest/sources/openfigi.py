@@ -43,6 +43,14 @@ YAHOO_SUFFIX = {
     "BZ": ".SA",
     "MM": ".MX",
     "SJ": ".JO",
+    "CG": ".SS",
+    "CS": ".SZ",
+    "AB": ".SR",
+    "QD": ".QA",
+    "TI": ".IS",
+    "KK": ".KW",
+    "CI": ".SN",
+    "EY": ".CA",
 }
 
 # Preferred exchanges per country of the ISIN (home listing first).
@@ -77,6 +85,13 @@ HOME_EXCHANGES = {
     "MX": ["MM"],
     "ZA": ["SJ"],
     "LU": ["FP", "NA", "GY", "US"],
+    "CN": ["CG", "CS", "HK"],
+    "SA": ["AB"],
+    "QA": ["QD"],
+    "TR": ["TI"],
+    "KW": ["KK"],
+    "CL": ["CI"],
+    "EG": ["EY"],
 }
 FALLBACK_EXCHANGES = ["US", "LN", "FP", "GY", "NA", "HK"]
 
@@ -98,6 +113,17 @@ def yahoo_symbol(isin: str, listings: list[dict]) -> tuple[str | None, str | Non
                 ticker = ticker.zfill(4)
             return ticker + YAHOO_SUFFIX[exchange], listing.get("figi")
     return None, None
+
+
+def all_symbols(listings: list[dict]) -> list[str]:
+    """Yahoo symbols of every equity listing (home and secondary), to resolve member lists by symbol."""
+    symbols = []
+    for listing in listings:
+        if listing.get("marketSector") == "Equity" and listing.get("exchCode") in YAHOO_SUFFIX:
+            symbols.append(
+                str(listing["ticker"]).replace("/", "-").replace(" ", "-") + YAHOO_SUFFIX[listing["exchCode"]]
+            )
+    return symbols
 
 
 class OpenFigiClient:

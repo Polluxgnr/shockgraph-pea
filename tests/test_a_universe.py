@@ -8,7 +8,7 @@ import pytest
 from scripts.ingest import universe
 from scripts.ingest.sources import ssga
 from scripts.ingest.sources.indexes import parse_market_cap
-from scripts.ingest.sources.openfigi import yahoo_symbol
+from scripts.ingest.sources.openfigi import all_symbols, yahoo_symbol
 
 EEA = {"FR", "DE", "NL", "IE", "LU"}
 NAMES = {"France": "FR", "Germany": "DE", "Netherlands": "NL", "Ireland": "IE", "United States": "US"}
@@ -55,6 +55,17 @@ def test_yahoo_symbol_formats_us_classes_and_hong_kong():
     """'BRK/B' becomes 'BRK-B'; Hong Kong codes are zero-padded."""
     assert yahoo_symbol("US0846707026", [listing("US", "BRK/B")])[0] == "BRK-B"
     assert yahoo_symbol("KYG875721634", [listing("HK", "700")])[0] == "0700.HK"
+
+
+def test_yahoo_symbol_china_a_shares():
+    """Shanghai and Shenzhen A-shares get the Yahoo .SS and .SZ suffixes."""
+    assert yahoo_symbol("CNE000001R84", [listing("CH", "600519"), listing("CG", "600519")])[0] == "600519.SS"
+    assert yahoo_symbol("CNE100000G29", [listing("CS", "000333")])[0] == "000333.SZ"
+
+
+def test_all_symbols_lists_secondary_listings():
+    """Airbus is home-listed in Amsterdam but the CAC 40 lists it as AIR.PA: both symbols are known."""
+    assert all_symbols([listing("NA", "AIR"), listing("FP", "AIR"), listing("ZZ", "X")]) == ["AIR.AS", "AIR.PA"]
 
 
 def test_yahoo_symbol_ignores_non_equity_and_unknown_exchanges():

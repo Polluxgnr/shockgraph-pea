@@ -19,7 +19,7 @@ from app.config import Settings
 from app.database.neo4j import Neo4jClient
 from scripts.ingest.sources import indexes as index_sources
 from scripts.ingest.sources import ssga
-from scripts.ingest.sources.openfigi import OpenFigiClient, yahoo_symbol
+from scripts.ingest.sources.openfigi import OpenFigiClient, all_symbols, yahoo_symbol
 
 SEED_DIR = Path("data/seed")
 BATCH_SIZE = 1000
@@ -152,8 +152,11 @@ def build(settings: Settings, refresh: bool = False) -> dict:
     weights = {code: dict(zip(frame["isin"], frame["weight"])) for code, frame in holdings.items()}
 
     figi = OpenFigiClient(settings.openfigi_api_key, Path(settings.data_dir) / "cache" / "openfigi.json")
-    symbols = {isin: yahoo_symbol(isin, found) for isin, found in figi.map_isins(companies.index.tolist()).items()}
-    symbol_to_isin = {symbol: isin for isin, (symbol, _) in symbols.items() if symbol}
+    listings = figi.map_isins(companies.index.tolist())
+    symbols = {isin: yahoo_symbol(isin, found) for isin, found in listings.items()}
+    # Home symbols first, then every other listing: member lists use the symbol of the main market.
+    symbol_to_isin = {alias: isin for isin, found in listings.items() for alias in all_symbols(found)}
+    symbol_to_isin.update({symbol: isin for isin, (symbol, _) in symbols.items() if symbol})
 
     nasdaq = {row["symbol"].replace("/", "-"): row["market_cap_usd"] for row in index_sources.nasdaq100()}
     nasdaq_caps = {symbol_to_isin[sym]: cap for sym, cap in nasdaq.items() if cap and sym in symbol_to_isin}
