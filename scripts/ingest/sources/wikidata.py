@@ -42,14 +42,7 @@ def products_by_isin(isins: list[str], pause: float = 1.0) -> list[dict]:
     ) as http:
         for start in range(0, len(isins), BATCH_SIZE):
             query = build_query(isins[start : start + BATCH_SIZE])
-            for attempt in range(4):
-                response = http.get(ENDPOINT, params={"query": query})
-                if response.status_code in (429, 500, 502, 503, 504):
-                    time.sleep(int(response.headers.get("retry-after", 10 * (attempt + 1))))
-                    continue
-                response.raise_for_status()
-                break
-            for binding in response.json()["results"]["bindings"]:
+            for binding in _fetch(http, query)["results"]["bindings"]:
                 rows.append(
                     {
                         "isin": binding["isin"]["value"],
@@ -60,3 +53,19 @@ def products_by_isin(isins: list[str], pause: float = 1.0) -> list[dict]:
                 )
             time.sleep(pause)
     return rows
+
+
+def _fetch(http: httpx.Client, query: str, attempts: int = 5) -> dict:
+    """Run one SPARQL query, retrying on throttling, server errors and dropped connections."""
+    for attempt in range(attempts):
+        try:
+            response = http.get(ENDPOINT, params={"query": query})
+        except httpx.TransportError:
+            time.sleep(10 * (attempt + 1))
+            continue
+        if response.status_code in (429, 500, 502, 503, 504):
+            time.sleep(int(response.headers.get("retry-after", 10 * (attempt + 1))))
+            continue
+        response.raise_for_status()
+        return response.json()
+    raise RuntimeError(f"Wikidata kept failing after {attempts} attempts")
