@@ -40,3 +40,16 @@ One line per decision not settled by AGENTS.md: date, decision, why.
   fixture shows the HOLDS vs TRACKS difference.
 - 2026-10-25 · Sector and industry codes are slugs of the GICS names (`INFORMATION_TECHNOLOGY`), so the same name
   always gives the same node.
+- 2026-10-25 · Member lists (CAC 40, Nasdaq-100) are resolved through **every** listing of each ISIN, not only the
+  home one: Airbus is home-listed in Amsterdam but the CAC 40 names it `AIR.PA`. Result: CAC 40 40/40,
+  Nasdaq-100 98/101 (ASML, ARM: the Nasdaq line is an ADR with another ISIN; NBIS is not in ACWI).
+- 2026-10-25 · More exchanges mapped to Yahoo (Shanghai `.SS`, Shenzhen `.SZ`, Saudi `.SR`, Qatar, Turkey, Kuwait,
+  Chile, Egypt): Yahoo symbols found for 2,371 of 2,466 companies (96 %). Taiwan OTC and UAE lines stay without.
+- 2026-10-25 · CAC 40 members come from the MediaWiki API: the plain page answers 403 to scripts.
+
+## First real run (25 Oct, holdings of 22 Oct)
+
+`python -m scripts.seed_data --only universe`: 65 s with a warm OpenFIGI cache (the first OpenFIGI pass takes
+~55 min without an API key). 2,466 companies (305 PEA-eligible), 66 countries, 11 sectors, 75 industries,
+7 indexes, 14 funds; 5,658 CONSTITUENT, 2,466 IN_INDUSTRY, 2,466 HEADQUARTERED_IN, 75 PART_OF, 14 TRACKS.
+Running it twice gives the same counts. EUR/USD 1.1193 (ECB).
