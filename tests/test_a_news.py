@@ -116,6 +116,9 @@ def test_llm_names_not_in_the_headline_are_dropped():
         ("Schneider", "Schneider Electric SE", True),
         ("Schneider Electric", "Schneider National Inc.", False),
         ("Total", "TotalEnergies SE", False),  # prefix inside a word does not count
+        ("Shell", "Shell Plc", False),  # "155mm Shell Order": a common word, refused (real-run false positive)
+        ("New", "New Oriental Education & Technology", False),  # "Receives New Order" (real-run false positive)
+        ("RWE", "RWE AG", True),  # 3-letter names still match when they are the whole name
         ("BP", "BP PLC", False),  # under 3 letters: never matched automatically
     ],
 )
@@ -135,6 +138,30 @@ def test_noisy_or():
     """Two independent 0.6 sources give 0.84."""
     assert news.noisy_or([0.6, 0.6]) == pytest.approx(0.84)
     assert news.noisy_or([]) == 0
+
+
+def test_claim_confidence_counts_one_vote_per_publisher_and_never_reaches_one():
+    """Ten syndicated copies of one story are one vote; many publishers are capped at 0.95."""
+    assert news.claim_confidence([("Reuters", 0.6)] * 10) == pytest.approx(0.6)
+    assert news.claim_confidence([("Reuters", 0.6), ("Reuters", 0.8), ("FT", 0.6)]) == pytest.approx(0.92)
+    assert news.claim_confidence([(f"source{i}", 0.6) for i in range(10)]) == news.MAX_CLAIM_CONFIDENCE
+
+
+@pytest.mark.parametrize(
+    "headline",
+    [
+        "TotalEnergies Signs JV Deal with Petronas, Mitsui for Carbon Storage Areas in Malaysia",
+        "Siemens Energy Taps Goldman Sachs for Steam Turbine Stake Sale",
+        "Caixabank hires Morgan Stanley for potential Cetelem bid",
+    ],
+)
+def test_corporate_finance_headlines_are_not_supply(headline):
+    """Seen in the first real run: JVs and banking mandates are filtered before extraction."""
+    resolver = FakeResolver({})
+    _, evidence, counters = news.build_rows(
+        [{"url": "u", "title": headline, "source": "s", "published_at": None}], news.extract_with_rules, resolver
+    )
+    assert not evidence and counters["not_supply"] == 1
 
 
 class FakeResolver:
@@ -237,12 +264,16 @@ def test_claim_is_confirmed_by_two_publishers(two_companies):
     first = client.read("MATCH (q:Claim {claim_id: $id}) RETURN q.status AS status, q.confidence AS c", {"id": claim})
     assert first == [{"status": "hypothesis", "c": pytest.approx(0.6)}]
 
+    news.load(client, [article("https://test-a.example/1b", "World Oil")], [evidence("https://test-a.example/1b", 0.6)])
+    same_source = client.read("MATCH (q:Claim {claim_id: $id}) RETURN q.status AS status", {"id": claim})
+    assert same_source == [{"status": "hypothesis"}]  # a second article from the same publisher is not a confirmation
+
     news.load(client, [article(url_two, "Reuters")], [evidence(url_two, 0.6)])
     news.load(client, [article(url_two, "Reuters")], [evidence(url_two, 0.6)])  # idempotent
     second = client.read(
         "MATCH (q:Claim {claim_id: $id})-[e:EXTRACTED_FROM]->() RETURN q.status AS status, q.confidence AS c, count(e) AS n",
         {"id": claim},
     )
-    assert second == [{"status": "confirmed", "c": pytest.approx(0.84), "n": 2}]
+    assert second == [{"status": "confirmed", "c": pytest.approx(0.84), "n": 3}]
     fixture = client.read("MATCH (q:Claim {claim_id: 'c1'}) RETURN q.status AS status, q.confidence AS c")
     assert fixture == [{"status": "hypothesis", "c": 0.8}]
