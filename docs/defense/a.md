@@ -50,6 +50,12 @@ looks the node up: with the uniqueness constraint `company_isin`, that lookup is
 it, each `MERGE` would scan every Company node, so loading n companies would cost O(n²). A second run changes
 nothing; constituents that left an index are deleted by comparing `as_of` dates.
 
-## Numbers (filled after the real run)
+## A1 numbers (first real run, holdings of 22 Oct 2026)
 
-See the PR of A1 and `docs/data_sources.md` (A5).
+- 2,466 companies, **305 PEA-eligible**, 66 countries, 11 sectors, 75 industries, 7 indexes, 14 funds.
+- 5,658 `CONSTITUENT` links; every index's weights sum to 1.
+- Yahoo symbol found for 2,371 companies (96 %); CAC 40 resolved 40/40, Nasdaq-100 98/101.
+- 65 s per run with a warm cache; the first OpenFIGI pass takes ~55 min without a key (~1 min with a free key).
+- Sanity checks: ASML estimated at €575 bn (Yahoo ≈ €542 bn); CW8 look-through starts with Apple 5.7 %,
+  NVIDIA 5.4 %, Microsoft 4.1 %. LVMH shows €100 bn instead of ≈ €190 bn: that is the **float** cap (the Arnault
+  family holds about half), which is exactly what index weights measure. Good question to expect.
