@@ -53,3 +53,26 @@ One line per decision not settled by AGENTS.md: date, decision, why.
 ~55 min without an API key). 2,466 companies (305 PEA-eligible), 66 countries, 11 sectors, 75 industries,
 7 indexes, 14 funds; 5,658 CONSTITUENT, 2,466 IN_INDUSTRY, 2,466 HEADQUARTERED_IN, 75 PART_OF, 14 TRACKS.
 Running it twice gives the same counts. EUR/USD 1.1193 (ECB).
+
+## A2 · Declared exposures (25 Oct)
+
+- 2026-10-25 · Industry-level links (`source: 'sector_map'`) come from a hand-written map,
+  `data/seed/industry_factors.csv`, one justification per line. Currencies and rates are **never** declared: a
+  company's sensitivity to EUR/USD or yields is measured from prices (C1), not asserted.
+- 2026-10-25 · Company-level `PRODUCES` (`source: 'wikidata'`) from Wikidata P1056 ("product or material
+  produced"), looked up by ISIN (P946) in batches of 150, without the label service (the slow part).
+  Matching: verified Q-ids first, then whole-word keywords, explicit exclusions win.
+- 2026-10-25 · Four of the 13 Q-ids I first wrote were wrong (Q190117 is "automotive industry", not LNG:
+  every carmaker would have "produced gas"). Every Q-id in `product_factors.csv` is now checked against its English
+  label with `wbgetentities`.
+- 2026-10-25 · Exclusion `copper hydroxide` (Corteva's fungicide uses copper, it does not produce it).
+  Known remaining noise, kept visible rather than hidden: TechnipFMC (oilfield services) lists petroleum as a
+  product; US and Asian gas sellers are linked to `NATGAS_EU` although their gas is priced on Henry Hub / JKM:
+  the declared fact is "sells natural gas", the TTF series is the factor we can price for a European investor.
+- 2026-10-25 · Stale links are removed by run id (`r.run`), and only links that carry one: the mini graph's links
+  have no run id and are never touched by a real ingestion run on the test database.
+
+First real run: 72 s; 12 factors; 28 industry links (22 CONSUMES, 6 PRODUCES); 1,471 of 2,466 companies found on
+Wikidata; 58 company `PRODUCES`; 1,386 products left unmatched (software, financial services, cars...), counted
+in the report. PEA companies with a declared dependency through their industry: gas 35, aluminium 20, oil 16,
+copper 15, gold 7, wheat 7.

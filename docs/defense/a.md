@@ -59,3 +59,27 @@ nothing; constituents that left an index are deleted by comparing `as_of` dates.
 - Sanity checks: ASML estimated at €575 bn (Yahoo ≈ €542 bn); CW8 look-through starts with Apple 5.7 %,
   NVIDIA 5.4 %, Microsoft 4.1 %. LVMH shows €100 bn instead of ≈ €190 bn: that is the **float** cap (the Arnault
   family holds about half), which is exactly what index weights measure. Good question to expect.
+
+## A2 · Declared exposures
+
+**What is "declared" vs "estimated"?** Declared = a statement from a source (Wikidata says Norsk Hydro produces
+aluminium; our map says airlines consume jet fuel): truth level `fact`, with `source` and `rationale` on the
+relationship. Estimated = a beta from prices (role C): `estimate`, with r² and window. Both can disagree, and the
+app shows both rather than merging them.
+
+**Why at industry level and not company level?** Company-level data on inputs does not exist for free; industry
+economics is stable and defensible line by line (jet fuel is 20–30 % of airline costs). The company inherits the
+dependency through `IN_INDUSTRY`. Wikidata then adds company-level production where it exists.
+
+**Why are currencies and rates not declared?** "A bank is exposed to rates" is true but the sign and size differ by
+bank; asserting it would be a guess. Only the regression can say it, as an estimate.
+
+**How do you avoid wrong matches?** Q-ids first (each checked against its label; four wrong ones were caught),
+whole-word keywords second ("gold" does not match "golden"), explicit exclusions win (copper hydroxide), and
+everything unmatched is counted, not guessed: 1,386 products stay unmatched.
+
+**Why relationship types can't be parameters, and how the code stays safe.** Cypher cannot take a relationship
+type as `$param`, so there is one fixed query per type, built from a constant tuple (`PRODUCES`, `CONSUMES`),
+never from data.
+
+**Numbers.** 12 factors, 28 industry links, 58 company links from Wikidata (1,471 companies found), 72 s.
