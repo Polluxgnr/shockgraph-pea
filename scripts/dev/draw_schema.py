@@ -91,6 +91,51 @@ def border(name: str, towards: tuple[float, float], gap: float = 6) -> tuple[flo
 def draw_png(path: Path) -> None:
     """The same schema as a PNG."""
     figure, axis = plt.subplots(figsize=(16, 8.4), dpi=130)
+    _draw_edges(axis)
+    for name, (left, top, props) in NODES.items():
+        box = FancyBboxPatch(
+            (left, -(top + HEIGHT)),
+            WIDTH,
+            HEIGHT,
+            boxstyle="round,pad=0,rounding_size=10",
+            facecolor="#f5f7fa",
+            edgecolor="#57606a",
+            zorder=2,
+        )
+        axis.add_patch(box)
+        axis.text(left + WIDTH / 2, -(top + 24), name, ha="center", fontsize=11, fontweight="bold", zorder=5)
+        axis.text(
+            left + WIDTH / 2, -(top + 54), props, ha="center", va="center", fontsize=7.5, color="#444444", zorder=5
+        )
+    for row, (truth, colour) in enumerate(TRUTH_COLOURS.items()):
+        axis.plot([1180, 1220], [-600 - 26 * row] * 2, color=colour, linestyle="-" if truth == "fact" else "--")
+        axis.text(1230, -600 - 26 * row, truth, color=colour, va="center", fontsize=9)
+    axis.text(1180, -578, "Truth level", fontsize=9, fontweight="bold")
+    axis.text(
+        60,
+        -735,
+        "* unique constraint   ·   full-text indexes: company_name_ft, fund_name_ft, factor_name_ft",
+        fontsize=8,
+        color="#555555",
+    )
+    axis.set_xlim(20, 1420)
+    axis.set_ylim(-750, 20)
+    axis.axis("off")
+    figure.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(path)
+    plt.close(figure)
+
+
+def main() -> None:
+    """Write both files."""
+    Path("docs/schema.drawio").write_text(drawio_xml(), encoding="utf-8")
+    draw_png(Path("docs/img/a_schema.png"))
+    print("docs/schema.drawio and docs/img/a_schema.png written")
+
+
+def _draw_edges(axis) -> None:
+    """Arrows and labels, coloured and dashed by truth level."""
     for source, target, label, truth, bend, offset_x, offset_y in EDGES:
         colour = TRUTH_COLOURS[truth]
         style = "-" if truth == "fact" else "--"
@@ -132,46 +177,6 @@ def draw_png(path: Path) -> None:
             )
         )
         axis.text((start[0] + end[0]) / 2 + offset_x, (start[1] + end[1]) / 2 + offset_y, label, **text_style)
-    for name, (left, top, props) in NODES.items():
-        box = FancyBboxPatch(
-            (left, -(top + HEIGHT)),
-            WIDTH,
-            HEIGHT,
-            boxstyle="round,pad=0,rounding_size=10",
-            facecolor="#f5f7fa",
-            edgecolor="#57606a",
-            zorder=2,
-        )
-        axis.add_patch(box)
-        axis.text(left + WIDTH / 2, -(top + 24), name, ha="center", fontsize=11, fontweight="bold", zorder=5)
-        axis.text(
-            left + WIDTH / 2, -(top + 54), props, ha="center", va="center", fontsize=7.5, color="#444444", zorder=5
-        )
-    for row, (truth, colour) in enumerate(TRUTH_COLOURS.items()):
-        axis.plot([1180, 1220], [-600 - 26 * row] * 2, color=colour, linestyle="-" if truth == "fact" else "--")
-        axis.text(1230, -600 - 26 * row, truth, color=colour, va="center", fontsize=9)
-    axis.text(1180, -578, "Truth level", fontsize=9, fontweight="bold")
-    axis.text(
-        60,
-        -735,
-        "* unique constraint   ·   full-text indexes: company_name_ft, fund_name_ft, factor_name_ft",
-        fontsize=8,
-        color="#555555",
-    )
-    axis.set_xlim(20, 1420)
-    axis.set_ylim(-750, 20)
-    axis.axis("off")
-    figure.tight_layout()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(path)
-    plt.close(figure)
-
-
-def main() -> None:
-    """Write both files."""
-    Path("docs/schema.drawio").write_text(drawio_xml(), encoding="utf-8")
-    draw_png(Path("docs/img/a_schema.png"))
-    print("docs/schema.drawio and docs/img/a_schema.png written")
 
 
 if __name__ == "__main__":
