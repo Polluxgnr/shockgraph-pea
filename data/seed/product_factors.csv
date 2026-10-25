@@ -1,0 +1,23 @@
+match,factor,note
+Q22656,BRENT,petroleum
+Q3412078,BRENT,crude oil
+Q337540,BRENT,motor fuel
+Q39558,BRENT,gasoline
+Q38423,BRENT,diesel fuel
+Q193784,BRENT,motor oil
+Q40858,NATGAS_EU,natural gas
+Q358333,NATGAS_EU,liquefied natural gas
+Q753,COPPER,copper
+Q897,GOLD,gold
+Q663,ALUMINIUM,aluminium
+Q447725,ALUMINIUM,aluminium alloy
+Q15645384,WHEAT,wheat
+keyword:petroleum,BRENT,label contains the word
+keyword:crude oil,BRENT,label contains the words
+keyword:natural gas,NATGAS_EU,label contains the words
+keyword:copper,COPPER,label contains the word
+keyword:gold,GOLD,label contains the word (gold mining, gold bullion)
+keyword:aluminium,ALUMINIUM,label contains the word
+keyword:aluminum,ALUMINIUM,US spelling
+keyword:wheat,WHEAT,label contains the word
+exclude:copper hydroxide,-,fungicide (Corteva): uses copper, does not produce it
