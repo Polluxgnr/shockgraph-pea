@@ -30,6 +30,14 @@ WINDOW_DAYS = 90
 RULE_CONFIDENCE = 0.6
 LLM_MAX_CONFIDENCE = 0.9
 CONFIRMATION_SOURCES = 2
+MAX_CLAIM_CONFIDENCE = 0.95  # a news claim is never certain, however many publishers repeat it
+
+# Corporate-finance news is not a supply relation (JV partners, advisers on a stake sale, bidders).
+NOT_SUPPLY = re.compile(
+    r"\b(?:JV|joint venture|merger|acquisition|acquire[sd]?|takeover|stake|bid|IPO|buyback|spin-?off|"
+    r"advis[eo]r?s?|lawsuit|sues)\b",
+    re.I,
+)
 
 LEGAL_SUFFIXES = {
     "sa", "se", "ag", "nv", "plc", "inc", "corp", "corporation", "co", "ltd", "limited", "group", "holding",
@@ -143,16 +151,30 @@ def normalise(name: str) -> str:
     return " ".join(word for word in words if word not in LEGAL_SUFFIXES)
 
 
+# Company names that are also common words in Title Case headlines ("155mm Shell Order", "New Order").
+# Refusing them loses a few true relations (a real Shell contract) but never invents one: precision first.
+AMBIGUOUS_NAMES = {
+    "shell", "orange", "target", "visa", "next", "block", "ball", "total", "sky", "snap", "gap", "unity",
+    "new", "first", "general", "united", "national", "global", "international", "american", "royal", "major",
+}  # fmt: skip
+
+
 def names_match(mention: str, company_name: str) -> bool:
     """True when the mention and the company name agree once legal suffixes are removed.
 
     Either they are equal, or one starts with the other at a word boundary ('SLB' vs 'SLB Limited',
-    'Schneider' vs 'Schneider Electric'). Single words shorter than 3 letters never match.
+    'Schneider' vs 'Schneider Electric'). Never for mentions that are common words (AMBIGUOUS_NAMES),
+    names under 3 letters, or one-word prefixes under 4 letters.
     """
     left, right = normalise(mention), normalise(company_name)
-    if not left or not right or min(len(left), len(right)) < 3:
+    if not left or not right or min(len(left), len(right)) < 3 or left in AMBIGUOUS_NAMES:
         return False
-    return left == right or right.startswith(left + " ") or left.startswith(right + " ")
+    if left == right:
+        return True
+    shorter = left if len(left) < len(right) else right
+    if " " not in shorter and len(shorter) < 4:
+        return False
+    return right.startswith(left + " ") or left.startswith(right + " ")
 
 
 def lucene_escape(text: str) -> str:
@@ -200,12 +222,24 @@ def noisy_or(confidences: list[float]) -> float:
     return round(1 - remaining, 4)
 
 
+def claim_confidence(evidence: list[tuple[str, float]]) -> float:
+    """Same rule as the SCORE query: best confidence per publisher, noisy-OR, capped below certainty."""
+    best: dict[str, float] = {}
+    for source, confidence in evidence:
+        best[source] = max(confidence, best.get(source, 0.0))
+    return min(MAX_CLAIM_CONFIDENCE, noisy_or(list(best.values())))
+
+
 def build_rows(articles: list[dict], extract, resolver: Resolver) -> tuple[list[dict], list[dict], dict]:
     """Turn headlines into article rows and claim-evidence rows; return them with drop counters."""
     article_rows, evidence_rows = [], []
-    counters = {"candidates": 0, "unresolved": 0, "same_company": 0}
+    counters = {"not_supply": 0, "candidates": 0, "unresolved": 0, "same_company": 0}
     for article in articles:
         mentions: set[str] = set()
+        if NOT_SUPPLY.search(article["title"]):
+            counters["not_supply"] += 1
+            article_rows.append({**article, "mentions": []})
+            continue
         for candidate in extract(article["title"]):
             counters["candidates"] += 1
             supplier, customer = resolver.resolve(candidate.supplier), resolver.resolve(candidate.customer)
@@ -254,12 +288,16 @@ SET e.confidence = row.confidence, e.extractor = row.extractor
 """
 
 # Recompute every news claim from all its evidence; 'rejected' is a human decision and is never overwritten.
+# Recompute every news claim from all its evidence. One vote per publisher (its best confidence), because
+# syndicated copies of one story are not independent. 'rejected' is a human decision and is never overwritten.
 SCORE = """
 MATCH (q:Claim)-[e:EXTRACTED_FROM]->(a:Article)
 WHERE q.claim_id STARTS WITH 'n-'
-WITH q, collect(e.confidence) AS confidences, count(DISTINCT a.source) AS sources,
-     collect(DISTINCT e.extractor) AS extractors
-SET q.confidence = 1 - reduce(remaining = 1.0, c IN confidences | remaining * (1 - c)),
+WITH q, a.source AS source, max(e.confidence) AS best, collect(DISTINCT e.extractor) AS used
+WITH q, collect(best) AS per_source, count(source) AS sources,
+     reduce(all = [], names IN collect(used) | all + [name IN names WHERE NOT name IN all]) AS extractors
+WITH q, sources, extractors, 1 - reduce(remaining = 1.0, c IN per_source | remaining * (1 - c)) AS combined
+SET q.confidence = CASE WHEN combined > $cap THEN $cap ELSE round(combined, 4) END,
     q.sources = sources, q.extractors = extractors, q.model = extractors[0],
     q.status = CASE WHEN q.status = 'rejected' THEN 'rejected'
                     WHEN sources >= $needed THEN 'confirmed' ELSE 'hypothesis' END
@@ -281,7 +319,7 @@ def load(client: Neo4jClient, article_rows: list[dict], evidence_rows: list[dict
     """Write articles, mentions and claims, then rescore every news claim."""
     client.write(ARTICLES, {"rows": article_rows})
     client.write(EVIDENCE, {"rows": evidence_rows})
-    scored = client.write(SCORE, {"needed": CONFIRMATION_SOURCES})
+    scored = client.write(SCORE, {"needed": CONFIRMATION_SOURCES, "cap": MAX_CLAIM_CONFIDENCE})
     return scored[0] if scored else {"claims": 0, "confirmed": 0}
 
 
