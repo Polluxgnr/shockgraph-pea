@@ -32,3 +32,4 @@ pylint>=3.3
 black>=24.8
 pre-commit>=3.8
 black==26.10.1  # same version as the pre-commit hook (.pre-commit-config.yaml)
+lxml>=5.3  # HTML tables (CAC 40 members from Wikipedia)
