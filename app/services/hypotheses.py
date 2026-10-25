@@ -9,8 +9,7 @@ LIST_CLAIMS = """
 MATCH (q:Claim)-[:SUBJECT]->(s:Company), (q)-[:OBJECT]->(o:Company)
 WHERE ($status IS NULL OR q.status = $status)
   AND ($isin IS NULL OR s.isin = $isin OR o.isin = $isin)
-CALL {
-  WITH q
+CALL (q) {
   OPTIONAL MATCH (q)-[:EXTRACTED_FROM]->(a:Article)
   RETURN a ORDER BY a.published_at DESC LIMIT 1
 }
