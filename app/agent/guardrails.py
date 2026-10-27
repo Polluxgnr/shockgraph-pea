@@ -68,9 +68,17 @@ _BACKTICK = re.compile(r"`([^`]*)`")
 _MAP_LITERAL = re.compile(r"\{\s*[A-Za-z_]\w*\s*:[^{}]*\}")
 _REL_PATTERN = re.compile(r"\[([^\[\]]*)\]")
 _LABEL_USE = re.compile(r"(?:\b[A-Za-z_]\w*|\()\s*:\s*(!?[A-Za-z_]\w*(?:\s*[:&|]\s*!?[A-Za-z_]\w*)*)")
-_QUANTIFIER = re.compile(r"\)\s*(\+|\*|\{\s*(\d*)\s*,\s*(\d*)\s*\}|\{\s*(\d+)\s*\})")
+# A quantifier after a node group `)` or, since Neo4j 5.9, right after a relationship (`]-`, `]->`, `-->`).
+_QUANTIFIER = re.compile(r"(?:\)|-|>)\s*(\+|\*|\{\s*(\d*)\s*,\s*(\d*)\s*\}|\{\s*(\d+)\s*\})")
 _CALL = re.compile(r"\bCALL\s+([A-Za-z_][\w.]*)\s*\(", re.I)
-_LIMIT = re.compile(r"\bLIMIT\s+(\S+)", re.I)
+_LIMIT = re.compile(r"\bLIMIT\b", re.I)
+# An integer literal followed by the end, `}`, `;`, UNION or the next clause: `LIMIT 10 + 100000` is refused.
+_STRICT_LIMIT = re.compile(
+    r"\bLIMIT\s+(\d+)\s*(?=$|\}|;|\b(?:UNION|MATCH|OPTIONAL|WITH|UNWIND|CALL|RETURN|ORDER|SKIP)\b)", re.I
+)
+# A map right after a variable: projection `c {.name, beta: r.beta}` or properties `(c:Company {isin: $isin})`.
+_MAP_AFTER_NAME = re.compile(r"\b(\w+)\s*\{[^{}]*\}")
+SUBQUERY_KEYWORDS = {"CALL", "EXISTS", "COUNT", "COLLECT"}
 
 
 @dataclass
@@ -142,6 +150,7 @@ class CypherValidator:
         scrubbed = text
         while _MAP_LITERAL.search(scrubbed):
             scrubbed = _MAP_LITERAL.sub("{}", scrubbed)
+        scrubbed = _MAP_AFTER_NAME.sub(_blank_projection, scrubbed)
         for body in _REL_PATTERN.findall(scrubbed):
             reasons += _check_relationship(body)
         without_rels = _REL_PATTERN.sub("[]", scrubbed)
@@ -159,18 +168,23 @@ class CypherValidator:
 
     @staticmethod
     def _limit(upper: str) -> list[str]:
-        """A literal LIMIT of at most MAX_LIMIT after the last RETURN."""
+        """Every LIMIT is a single integer literal of at most MAX_LIMIT, and the final RETURN has one."""
         last_return = upper.rfind("RETURN")
-        tail_limits = _LIMIT.findall(upper[last_return:]) if last_return >= 0 else []
         reasons = []
-        if not tail_limits:
+        if last_return < 0 or not _LIMIT.search(upper[last_return:]):
             reasons.append(f"the final RETURN needs a LIMIT (at most {MAX_LIMIT})")
-        for value in _LIMIT.findall(upper):
-            if not value.isdigit():
-                reasons.append("LIMIT must be an integer literal")
-            elif int(value) > MAX_LIMIT:
-                reasons.append(f"LIMIT {value} is above {MAX_LIMIT}")
+        strict = {match.start(): int(match.group(1)) for match in _STRICT_LIMIT.finditer(upper)}
+        for match in _LIMIT.finditer(upper):
+            if match.start() not in strict:
+                reasons.append("LIMIT must be a single integer literal")
+            elif strict[match.start()] > MAX_LIMIT:
+                reasons.append(f"LIMIT {strict[match.start()]} is above {MAX_LIMIT}")
         return reasons
+
+
+def _blank_projection(match: re.Match) -> str:
+    """Keep the variable, drop the map after it; keep subquery braces (CALL {...}, EXISTS {...})."""
+    return match.group(0) if match.group(1).upper() in SUBQUERY_KEYWORDS else match.group(1)
 
 
 def _has_word(upper: str, phrase: str) -> bool:
