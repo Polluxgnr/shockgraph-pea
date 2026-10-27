@@ -143,6 +143,13 @@ def company_row(isin: str, row: pd.Series, listing: tuple, caps_eur: dict, count
     }
 
 
+def home_symbols(listings: dict[str, list[dict]], companies: pd.DataFrame, countries: dict[str, dict]) -> dict:
+    """(Yahoo symbol, FIGI) of each company, preferring the exchanges of the country where it trades."""
+    name_to_code = {country["name"]: code for code, country in countries.items()}
+    listed_in = {isin: name_to_code.get(str(name).strip()) for isin, name in companies["listing_country"].items()}
+    return {isin: yahoo_symbol(isin, found, listed_in.get(isin)) for isin, found in listings.items()}
+
+
 def build(settings: Settings, refresh: bool = False) -> dict:
     """Download and assemble everything; return the rows to load and a report."""
     countries = {row["code"]: row for row in read_seed("countries.csv")}
@@ -153,7 +160,7 @@ def build(settings: Settings, refresh: bool = False) -> dict:
 
     figi = OpenFigiClient(settings.openfigi_api_key, Path(settings.data_dir) / "cache" / "openfigi.json")
     listings = figi.map_isins(companies.index.tolist())
-    symbols = {isin: yahoo_symbol(isin, found) for isin, found in listings.items()}
+    symbols = home_symbols(listings, companies, countries)
     # Home symbols first, then every other listing: member lists use the symbol of the main market.
     symbol_to_isin = {alias: isin for isin, found in listings.items() for alias in all_symbols(found)}
     symbol_to_isin.update({symbol: isin for isin, (symbol, _) in symbols.items() if symbol})
@@ -217,7 +224,8 @@ UNWIND $rows AS row
 MERGE (c:Company {isin: row.isin})
 SET c.name = row.name, c.ticker = row.ticker, c.figi = row.figi, c.currency = row.currency,
     c.listing_country = row.listing_country, c.pea_eligible = row.pea_eligible,
-    c.market_cap_eur = row.market_cap_eur, c.market_cap_method = row.market_cap_method
+    c.market_cap_eur = row.market_cap_eur, c.market_cap_method = row.market_cap_method,
+    c.as_of = date($as_of)
 WITH c, row
 OPTIONAL MATCH (c)-[old:IN_INDUSTRY]->(previous:Industry) WHERE previous.code <> row.industry_code
 DELETE old
@@ -275,7 +283,7 @@ def load(client: Neo4jClient, data: dict) -> None:
     client.write(COUNTRIES, {"rows": data["countries"]})
     client.write(SECTORS, {"rows": _distinct_industries(data["companies"])})
     for chunk in batches(data["companies"]):
-        client.write(COMPANIES, {"rows": chunk})
+        client.write(COMPANIES, {"rows": chunk, "as_of": data["as_of"]})
     client.write(INDEXES, {"rows": data["indexes"]})
     for chunk in batches(data["constituents"]):
         client.write(CONSTITUENTS, {"rows": chunk, "as_of": data["as_of"]})
