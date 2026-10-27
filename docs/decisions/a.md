@@ -53,3 +53,15 @@ One line per decision not settled by AGENTS.md: date, decision, why.
 ~55 min without an API key). 2,466 companies (305 PEA-eligible), 66 countries, 11 sectors, 75 industries,
 7 indexes, 14 funds; 5,658 CONSTITUENT, 2,466 IN_INDUSTRY, 2,466 HEADQUARTERED_IN, 75 PART_OF, 14 TRACKS.
 Running it twice gives the same counts. EUR/USD 1.1193 (ECB).
+
+## Review of #24 (27 Oct)
+
+- 2026-10-27 · Saty found that for ISINs without a home rule the fallback picked the **US OTC line** (Tencent →
+  `TCTZF`, National Bank of Greece → `NBGIF`): 216 companies, some PEA-eligible; OTC prices barely move, which
+  would pull betas towards 0. Now: exchanges of the **listing country** (from SSGA) first, then of the ISIN country
+  (new rules for GR, CZ, HU, IL, TH, MY, ID, PH, NZ, KY, BM, codes checked against the OpenFIGI answers), then a
+  fallback **without US**; a US line is used only when the share trades in the US. Result: 2,367 tickers,
+  **0 OTC-looking tickers** (was 6 after the first fix, and ~216 before). Aegon → `AGN.AS`, Tencent → `0700.HK`,
+  CEZ → `CEZ.PR`. No ticker is better than an OTC ticker: C1 skips companies without one.
+- 2026-10-27 · `Company.as_of` = date of the last holdings file the company was in. A company that leaves every
+  index keeps its old date, so the current universe is `WHERE c.as_of = $latest` (betas, search, ML features).
