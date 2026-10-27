@@ -103,3 +103,36 @@ copper 15, gold 7, wheat 7.
   none, so a GICS rename or a company leaving the universe is visible.
 
 Run after the review: 24 industry links, 45 curated, 50 Wikidata-only, 0 code or ISIN without a link, 53 s.
+
+## A3 · News hypotheses (25 Oct)
+
+- 2026-10-25 · GDELT DOC 2.0 answered 429 ("one request every 5 seconds") even at 8 s spacing: the IP stays
+  throttled for a while. Primary source is Google News RSS (keyless, steady); GDELT is kept as an optional source.
+  Only headline, publisher, date and link are stored, never article text.
+- 2026-10-25 · Two independent extractors: precise **rules** (no model needed, confidence 0.6) and the small
+  **local LLM** with structured output when Ollama answers (capped at 0.9). C's `get_chat_model` still raises
+  `NotImplementedError`, so the first real runs used rules only; the LLM path is tested with a fake model.
+- 2026-10-25 · Guards, all counted in the report: corporate-finance headlines (JV, stake, bid, merger, advisers)
+  are not supply; the LLM may only copy names that are in the headline; both names must resolve to two different
+  companies of the graph; company names that are common words (Shell, New, Orange, Target...) are refused.
+- 2026-10-25 · Confidence = noisy-OR over **publishers** (best confidence per publisher), capped at 0.95.
+  `confirmed` = at least two publishers. Syndicated copies of one story are not independent evidence.
+- 2026-10-25 · Real-run false positives that drove these rules, kept as tests: "TotalEnergies signs JV deal with
+  Petronas", "Siemens Energy taps Goldman Sachs for stake sale", "Rheinmetall wins 155mm Shell order" (artillery
+  shell → Shell plc), "Rheinmetall receives New Order" ("New" → New Oriental Education).
+- 2026-10-25 · `HypothesisService` uses `CALL (q) { ... }`: the `CALL { WITH q }` form is deprecated in Neo4j 5.26.
+
+Third real run (60 largest PEA companies, 90 days): 100 s, 2,727 headlines, 281 filtered as corporate finance,
+154 candidate pairs, 145 unresolved (supplier outside our universe or ambiguous), 9 pieces of evidence, **4 claims,
+all true on reading**, 1 confirmed (SLB → TotalEnergies, 0.95). Precision first, recall low by design.
+
+## Review of #26 (27 Oct)
+
+- 2026-10-27 · Saty showed that one wire story listed by Google News under several publishers (Reuters reprinted by
+  Yahoo Finance, MarketScreener...) could still confirm a claim. Now one vote per **distinct story** (normalised
+  headline, `Article.title_key`), and `confirmed` needs two distinct stories from two publishers. Real run:
+  SLB → TotalEnergies stays confirmed with 4 distinct stories from 6 publishers.
+- 2026-10-27 · `HypothesisService`: `$isin IS NULL OR ...` in one query prevented any index use (EXPLAIN showed a
+  relationship type scan of every claim). Now the start of the query is chosen in Python from constant fragments:
+  company → `NodeUniqueIndexSeek` on `Company.isin`, status → `NodeIndexSeek` on `Claim.status`; a test checks
+  the operators in the EXPLAIN plan.
