@@ -31,6 +31,9 @@ class ToolCall(BaseModel):
     result_preview: str = ""
     duration_ms: int = 0
     error: str | None = None
+    result: Any = Field(
+        default=None, description="Full tool result: the verifier checks the answer's numbers against it"
+    )
 
 
 class AgentAnswer(BaseModel):
