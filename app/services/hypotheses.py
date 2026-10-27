@@ -3,12 +3,23 @@
 from app.database.neo4j import Neo4jClient
 from app.models.hypotheses import Hypothesis
 
-# One row per claim. The CALL subquery picks the claim's most recent article without multiplying rows;
-# the company filter uses the claim's own SUBJECT / OBJECT links (index seek on Company.isin first).
-LIST_CLAIMS = """
-MATCH (q:Claim)-[:SUBJECT]->(s:Company), (q)-[:OBJECT]->(o:Company)
-WHERE ($status IS NULL OR q.status = $status)
-  AND ($isin IS NULL OR s.isin = $isin OR o.isin = $isin)
+# The start of the query depends on the filters, so that the planner can use an index:
+# - a company: unique-index seek on Company.isin, then its claims (no scan of every claim);
+# - a status only: index seek on Claim.status (`claim_status`);
+# - nothing: all claims (the endpoint always has a LIMIT).
+# A single query with `$isin IS NULL OR ...` cannot use an index: the planner must plan for both cases and scans.
+# The fragments are constants chosen in Python, never built from user input; values stay parameters.
+START_BY_COMPANY = """
+MATCH (:Company {isin: $isin})<-[:SUBJECT|OBJECT]-(q:Claim)
+WITH DISTINCT q
+WHERE $status IS NULL OR q.status = $status
+"""
+START_BY_STATUS = "MATCH (q:Claim {status: $status})\n"
+START_ALL = "MATCH (q:Claim)\n"
+
+# One row per claim; the CALL subquery picks the most recent article without multiplying rows.
+TAIL = """
+MATCH (q)-[:SUBJECT]->(s:Company), (q)-[:OBJECT]->(o:Company)
 CALL (q) {
   OPTIONAL MATCH (q)-[:EXTRACTED_FROM]->(a:Article)
   RETURN a ORDER BY a.published_at DESC LIMIT 1
@@ -22,6 +33,13 @@ LIMIT $limit
 """
 
 
+def list_claims_query(company_isin: str | None, status: str | None) -> str:
+    """The Cypher text for these filters (only constant fragments are combined)."""
+    if company_isin:
+        return START_BY_COMPANY + TAIL
+    return (START_BY_STATUS if status else START_ALL) + TAIL
+
+
 class HypothesisService:
     """Reads Claim nodes with their provenance."""
 
@@ -32,5 +50,6 @@ class HypothesisService:
         self, company_isin: str | None = None, status: str | None = None, limit: int = 20
     ) -> list[Hypothesis]:
         """Claims (as subject or object of `company_isin` when given), most confident first."""
-        rows = self.client.read(LIST_CLAIMS, {"isin": company_isin, "status": status, "limit": limit})
+        query = list_claims_query(company_isin, status)
+        rows = self.client.read(query, {"isin": company_isin, "status": status, "limit": limit})
         return [Hypothesis(**row) for row in rows]
