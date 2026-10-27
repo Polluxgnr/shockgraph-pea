@@ -38,7 +38,7 @@ An API response or an agent answer carries the truth level of every number it sh
 
 | Label | Key (unique) | Properties |
 | --- | --- | --- |
-| `Company` | `isin` | `name`, `ticker` (Yahoo symbol, e.g. `TTE.PA`), `lei`, `currency`, `market_cap_eur`, `pea_eligible` (bool), `wikidata_id`, `figi` |
+| `Company` | `isin` | `name`, `ticker` (Yahoo symbol, e.g. `TTE.PA`), `lei`, `currency`, `market_cap_eur`, `pea_eligible` (bool), `wikidata_id`, `figi`, `listing_country`, `market_cap_method`, `as_of` (date of the last holdings file the company was in: filter `c.as_of = max(as_of)` for the current universe) |
 | `Fund` | `isin` | `name`, `ticker`, `issuer`, `ter` (annual fee, %), `replication` (`physical` / `synthetic`), `pea_eligible` (bool), `source_url` |
 | `Index` | `code` | `name`, `provider` |
 | `Sector` | `code` | `name` (GICS-like, 11 sectors) |

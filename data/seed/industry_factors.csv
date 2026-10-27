@@ -1,0 +1,25 @@
+industry_code,relation,factor,rationale
+OIL_GAS_CONSUMABLE_FUELS,PRODUCES,BRENT,Integrated majors and producers sell crude priced off Brent (Europe) or WTI (US)
+OIL_GAS_CONSUMABLE_FUELS,PRODUCES,WTI,US producers and refiners price crude off WTI
+OIL_GAS_CONSUMABLE_FUELS,PRODUCES,NATGAS_EU,Majors sell large volumes of gas and LNG into Europe at TTF-linked prices
+PASSENGER_AIRLINES,CONSUMES,BRENT,Jet fuel is 20 to 30 % of airline operating costs and tracks crude
+AIRLINES,CONSUMES,BRENT,Same as passenger airlines (older GICS name kept by some data providers)
+AIR_FREIGHT_LOGISTICS,CONSUMES,BRENT,Air and road freight burn kerosene and diesel
+MARINE_TRANSPORTATION,CONSUMES,BRENT,Bunker fuel is the first variable cost of shipping
+GROUND_TRANSPORTATION,CONSUMES,BRENT,Diesel for trucking and rail freight
+CHEMICALS,CONSUMES,BRENT,Naphtha (from crude) is the main petrochemical feedstock
+CHEMICALS,CONSUMES,NATGAS_EU,Gas is both feedstock (ammonia fertilisers) and energy for European chemical plants
+CONSTRUCTION_MATERIALS,CONSUMES,NATGAS_EU,Cement and glass kilns are gas-intensive in Europe
+PAPER_FOREST_PRODUCTS,CONSUMES,NATGAS_EU,Pulp drying and paper machines are energy-intensive
+ELECTRIC_UTILITIES,CONSUMES,NATGAS_EU,Gas-fired plants set the marginal power price in Europe
+MULTI_UTILITIES,CONSUMES,NATGAS_EU,Gas procurement for distribution and gas-fired generation
+GAS_UTILITIES,CONSUMES,NATGAS_EU,Gas distributors buy the gas they sell
+INDEPENDENT_POWER_AND_RENEWABLE_ELECTRICITY_PRODUCERS,CONSUMES,NATGAS_EU,Thermal independent producers burn gas (renewable ones are exposed through power prices)
+AUTOMOBILES,CONSUMES,ALUMINIUM,Bodies and battery casings use aluminium
+AUTOMOBILES,CONSUMES,COPPER,An electric car contains about four times more copper than a combustion car
+AUTOMOBILE_COMPONENTS,CONSUMES,ALUMINIUM,Wheels and castings
+AUTOMOBILE_COMPONENTS,CONSUMES,COPPER,Wiring harnesses and electric motors
+ELECTRICAL_EQUIPMENT,CONSUMES,COPPER,Cables and windings (Schneider and Prysmian type)
+AEROSPACE_DEFENSE,CONSUMES,ALUMINIUM,Airframes use aerospace-grade aluminium
+CONTAINERS_PACKAGING,CONSUMES,ALUMINIUM,Beverage cans
+FOOD_PRODUCTS,CONSUMES,WHEAT,Bakery and pasta makers buy flour; wheat is the main grain input
