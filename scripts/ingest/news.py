@@ -8,8 +8,8 @@ Pipeline, for the largest PEA companies:
 3. Guards: both names must appear in the headline, resolve to two different companies of the graph
    (full-text index + name check). Anything else is dropped and counted, never invented.
 4. One `Claim` per (supplier, customer, kind), linked to every `Article` that supports it. Confidence is the
-   noisy-OR of the per-article confidences; the claim is `confirmed` when at least two different publishers
-   support it. A claim is never a fact.
+   noisy-OR over distinct stories (normalised headlines, so syndicated copies count once), capped at 0.95; the
+   claim is `confirmed` when two distinct stories from two publishers support it. A claim is never a fact.
 Run alone with: python -m scripts.seed_data --only news
 """
 
@@ -222,11 +222,17 @@ def noisy_or(confidences: list[float]) -> float:
     return round(1 - remaining, 4)
 
 
+def story_key(title: str) -> str:
+    """Headline reduced to lowercase words: syndicated copies of one wire story get the same key."""
+    return " ".join(re.sub(r"[^\w\s]", " ", title.lower()).split())
+
+
 def claim_confidence(evidence: list[tuple[str, float]]) -> float:
-    """Same rule as the SCORE query: best confidence per publisher, noisy-OR, capped below certainty."""
+    """Same rule as the SCORE query: best confidence per distinct story (headline), noisy-OR, capped."""
     best: dict[str, float] = {}
-    for source, confidence in evidence:
-        best[source] = max(confidence, best.get(source, 0.0))
+    for title, confidence in evidence:
+        key = story_key(title)
+        best[key] = max(confidence, best.get(key, 0.0))
     return min(MAX_CLAIM_CONFIDENCE, noisy_or(list(best.values())))
 
 
@@ -238,7 +244,7 @@ def build_rows(articles: list[dict], extract, resolver: Resolver) -> tuple[list[
         mentions: set[str] = set()
         if NOT_SUPPLY.search(article["title"]):
             counters["not_supply"] += 1
-            article_rows.append({**article, "mentions": []})
+            article_rows.append({**article, "title_key": story_key(article["title"]), "mentions": []})
             continue
         for candidate in extract(article["title"]):
             counters["candidates"] += 1
@@ -261,14 +267,14 @@ def build_rows(articles: list[dict], extract, resolver: Resolver) -> tuple[list[
                     "extractor": candidate.extractor,
                 }
             )
-        article_rows.append({**article, "mentions": sorted(mentions)})
+        article_rows.append({**article, "title_key": story_key(article["title"]), "mentions": sorted(mentions)})
     return article_rows, evidence_rows, counters
 
 
 ARTICLES = """
 UNWIND $rows AS row
 MERGE (a:Article {url: row.url})
-SET a.title = row.title, a.source = row.source,
+SET a.title = row.title, a.title_key = row.title_key, a.source = row.source,
     a.published_at = CASE WHEN row.published_at IS NULL THEN null ELSE date(row.published_at) END
 WITH a, row
 UNWIND row.mentions AS isin
@@ -287,20 +293,23 @@ MERGE (q)-[e:EXTRACTED_FROM]->(a)
 SET e.confidence = row.confidence, e.extractor = row.extractor
 """
 
-# Recompute every news claim from all its evidence; 'rejected' is a human decision and is never overwritten.
-# Recompute every news claim from all its evidence. One vote per publisher (its best confidence), because
-# syndicated copies of one story are not independent. 'rejected' is a human decision and is never overwritten.
+# Recompute every news claim from all its evidence. One vote per distinct story (normalised headline, its best
+# confidence): Google News lists one wire story under several publishers, and those copies are not independent.
+# Confirmed = at least two distinct stories from at least two publishers. 'rejected' is a human decision, kept.
 SCORE = """
 MATCH (q:Claim)-[e:EXTRACTED_FROM]->(a:Article)
 WHERE q.claim_id STARTS WITH 'n-'
-WITH q, a.source AS source, max(e.confidence) AS best, collect(DISTINCT e.extractor) AS used
-WITH q, collect(best) AS per_source, count(source) AS sources,
+WITH q, coalesce(a.title_key, toLower(a.title)) AS story, max(e.confidence) AS best,
+     collect(DISTINCT a.source) AS publishers, collect(DISTINCT e.extractor) AS used
+WITH q, collect(best) AS per_story, count(story) AS stories,
+     reduce(all = [], names IN collect(publishers) | all + [name IN names WHERE NOT name IN all]) AS publishers,
      reduce(all = [], names IN collect(used) | all + [name IN names WHERE NOT name IN all]) AS extractors
-WITH q, sources, extractors, 1 - reduce(remaining = 1.0, c IN per_source | remaining * (1 - c)) AS combined
+WITH q, stories, size(publishers) AS sources, extractors,
+     1 - reduce(remaining = 1.0, c IN per_story | remaining * (1 - c)) AS combined
 SET q.confidence = CASE WHEN combined > $cap THEN $cap ELSE round(combined, 4) END,
-    q.sources = sources, q.extractors = extractors, q.model = extractors[0],
+    q.stories = stories, q.sources = sources, q.extractors = extractors, q.model = extractors[0],
     q.status = CASE WHEN q.status = 'rejected' THEN 'rejected'
-                    WHEN sources >= $needed THEN 'confirmed' ELSE 'hypothesis' END
+                    WHEN stories >= $needed AND sources >= $needed THEN 'confirmed' ELSE 'hypothesis' END
 RETURN count(q) AS claims, sum(CASE WHEN q.status = 'confirmed' THEN 1 ELSE 0 END) AS confirmed
 """
 
