@@ -54,6 +54,29 @@ One line per decision not settled by AGENTS.md: date, decision, why.
 7 indexes, 14 funds; 5,658 CONSTITUENT, 2,466 IN_INDUSTRY, 2,466 HEADQUARTERED_IN, 75 PART_OF, 14 TRACKS.
 Running it twice gives the same counts. EUR/USD 1.1193 (ECB).
 
+## A2 · Declared exposures (25 Oct)
+
+- 2026-10-25 · Industry-level links (`source: 'sector_map'`) come from a hand-written map,
+  `data/seed/industry_factors.csv`, one justification per line. Currencies and rates are **never** declared: a
+  company's sensitivity to EUR/USD or yields is measured from prices (C1), not asserted.
+- 2026-10-25 · Company-level `PRODUCES` (`source: 'wikidata'`) from Wikidata P1056 ("product or material
+  produced"), looked up by ISIN (P946) in batches of 150, without the label service (the slow part).
+  Matching: verified Q-ids first, then whole-word keywords, explicit exclusions win.
+- 2026-10-25 · Four of the 13 Q-ids I first wrote were wrong (Q190117 is "automotive industry", not LNG:
+  every carmaker would have "produced gas"). Every Q-id in `product_factors.csv` is now checked against its English
+  label with `wbgetentities`.
+- 2026-10-25 · Exclusion `copper hydroxide` (Corteva's fungicide uses copper, it does not produce it).
+  Known remaining noise, kept visible rather than hidden: TechnipFMC (oilfield services) lists petroleum as a
+  product; US and Asian gas sellers are linked to `NATGAS_EU` although their gas is priced on Henry Hub / JKM:
+  the declared fact is "sells natural gas", the TTF series is the factor we can price for a European investor.
+- 2026-10-25 · Stale links are removed by run id (`r.run`), and only links that carry one: the mini graph's links
+  have no run id and are never touched by a real ingestion run on the test database.
+
+First real run: 72 s; 12 factors; 28 industry links (22 CONSUMES, 6 PRODUCES); 1,471 of 2,466 companies found on
+Wikidata; 58 company `PRODUCES`; 1,386 products left unmatched (software, financial services, cars...), counted
+in the report. PEA companies with a declared dependency through their industry: gas 35, aluminium 20, oil 16,
+copper 15, gold 7, wheat 7.
+
 ## Review of #24 (27 Oct)
 
 - 2026-10-27 · Saty found that for ISINs without a home rule the fallback picked the **US OTC line** (Tencent →
@@ -65,3 +88,18 @@ Running it twice gives the same counts. EUR/USD 1.1193 (ECB).
   CEZ → `CEZ.PR`. No ticker is better than an OTC ticker: C1 skips companies without one.
 - 2026-10-27 · `Company.as_of` = date of the last holdings file the company was in. A company that leaves every
   index keeps its old date, so the current universe is `WHERE c.as_of = $latest` (betas, search, ML features).
+
+## Review of #25 (27 Oct)
+
+- 2026-10-27 · Saty showed that `METALS_MINING PRODUCES COPPER / GOLD / ALUMINIUM` and `TEXTILES_APPAREL_LUXURY_GOODS
+  CONSUMES GOLD` were false as `fact` for many members (Newmont "produced aluminium", Nike "bought gold"; Wheaton and
+  Franco-Nevada finance mines). Rule now: an industry line only when almost every member fits (airlines, oil & gas,
+  chemicals, utilities...). Metals and gold are declared **per company**: Wikidata P1056 plus
+  `data/seed/company_factors.csv`, 45 hand-checked links (8 jewellery and watch houses, named copper, gold and
+  aluminium producers), with ISINs taken from the graph, not from memory. Streamers and steelmakers are left out.
+- 2026-10-27 · When the curated list and Wikidata give the same link, `source` stays `curated` (human-checked wins)
+  and the Wikidata product name is kept on the link.
+- 2026-10-27 · The report now counts links **written** (not CSV lines) and lists industry codes and ISINs that wrote
+  none, so a GICS rename or a company leaving the universe is visible.
+
+Run after the review: 24 industry links, 45 curated, 50 Wikidata-only, 0 code or ISIN without a link, 53 s.
