@@ -88,3 +88,18 @@ copper 15, gold 7, wheat 7.
   CEZ → `CEZ.PR`. No ticker is better than an OTC ticker: C1 skips companies without one.
 - 2026-10-27 · `Company.as_of` = date of the last holdings file the company was in. A company that leaves every
   index keeps its old date, so the current universe is `WHERE c.as_of = $latest` (betas, search, ML features).
+
+## Review of #25 (27 Oct)
+
+- 2026-10-27 · Saty showed that `METALS_MINING PRODUCES COPPER / GOLD / ALUMINIUM` and `TEXTILES_APPAREL_LUXURY_GOODS
+  CONSUMES GOLD` were false as `fact` for many members (Newmont "produced aluminium", Nike "bought gold"; Wheaton and
+  Franco-Nevada finance mines). Rule now: an industry line only when almost every member fits (airlines, oil & gas,
+  chemicals, utilities...). Metals and gold are declared **per company**: Wikidata P1056 plus
+  `data/seed/company_factors.csv`, 45 hand-checked links (8 jewellery and watch houses, named copper, gold and
+  aluminium producers), with ISINs taken from the graph, not from memory. Streamers and steelmakers are left out.
+- 2026-10-27 · When the curated list and Wikidata give the same link, `source` stays `curated` (human-checked wins)
+  and the Wikidata product name is kept on the link.
+- 2026-10-27 · The report now counts links **written** (not CSV lines) and lists industry codes and ISINs that wrote
+  none, so a GICS rename or a company leaving the universe is visible.
+
+Run after the review: 24 industry links, 45 curated, 50 Wikidata-only, 0 code or ISIN without a link, 53 s.
