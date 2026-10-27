@@ -55,19 +55,35 @@ def drawio_xml() -> str:
             f'<mxCell id="{name}" value="{value}" style="{style}" vertex="1" parent="1">'
             f'<mxGeometry x="{left}" y="{top}" width="{WIDTH}" height="{HEIGHT}" as="geometry"/></mxCell>'
         )
-    for number, (source, target, label, truth, *_) in enumerate(EDGES):
+    for number, (source, target, label, truth, bend, *_) in enumerate(EDGES):
         colour = TRUTH_COLOURS[truth]
         dashed = "dashed=1;" if truth != "fact" else ""
         style = f"endArrow=classic;html=1;strokeColor={colour};fontColor={colour};{dashed}fontSize=10;"
         cells.append(
             f'<mxCell id="e{number}" value="{escape(label)} ({truth})" style="{style}" edge="1" '
-            f'source="{source}" target="{target}" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>'
+            f'source="{source}" target="{target}" parent="1"><mxGeometry relative="1" as="geometry">'
+            f"{waypoint(source, target, bend)}</mxGeometry></mxCell>"
         )
     body = "".join(cells)
     return (
         '<mxfile host="shockgraph-pea"><diagram name="ShockGraph PEA schema">'
         f'<mxGraphModel dx="1400" dy="760" grid="1" gridSize="10" page="1"><root>{body}</root></mxGraphModel>'
         "</diagram></mxfile>\n"
+    )
+
+
+def waypoint(source: str, target: str, bend: float) -> str:
+    """draw.io waypoint that curves an edge like the PNG (parallel edges would otherwise overlap); '' when straight."""
+    if not bend or source == target:
+        return ""
+    (start_x, start_y), (end_x, end_y) = centre(source), centre(target)
+    middle_x, middle_y = (start_x + end_x) / 2, -(start_y + end_y) / 2  # back to draw.io coordinates (y down)
+    length = ((end_x - start_x) ** 2 + (end_y - start_y) ** 2) ** 0.5
+    normal_x, normal_y = (end_y - start_y) / length, (end_x - start_x) / length  # perpendicular, y down
+    offset = bend * length
+    return (
+        f'<Array as="points"><mxPoint x="{middle_x + normal_x * offset:.0f}" '
+        f'y="{middle_y + normal_y * offset:.0f}"/></Array>'
     )
 
 
