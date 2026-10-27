@@ -4,6 +4,8 @@
 - Industry level: `data/seed/industry_factors.csv`, a hand-written map with one justification per line
   (airlines CONSUME BRENT, miners PRODUCE COPPER...). Currencies and rates are never declared: a company's
   exposure to them is measured from prices (role C), not asserted.
+- Company level, curated: `data/seed/company_factors.csv`, hand-checked links where an industry line would be
+  false for many members (not every Metals & Mining company produces gold; not every luxury house buys it).
 - Company level: Wikidata products (P1056) looked up by ISIN, matched to factors through
   `data/seed/product_factors.csv` (verified Q-ids first, then whole-word keywords). Unmatched products are
   counted, never guessed.
@@ -76,6 +78,18 @@ MATCH (n:Industry {{code: row.industry_code}})
 MATCH (x:Factor {{code: row.factor}})
 MERGE (n)-[r:{relation}]->(x)
 SET r.source = 'sector_map', r.rationale = row.rationale, r.run = $run
+RETURN row.industry_code AS key
+""" for relation in RELATIONS}
+
+# Hand-checked company-level links (jewellers buy gold, named miners produce copper...): where an industry line
+# would be false for many of its members.
+CURATED_LINKS = {relation: f"""
+UNWIND $rows AS row
+MATCH (c:Company {{isin: row.isin}})
+MATCH (x:Factor {{code: row.factor}})
+MERGE (c)-[r:{relation}]->(x)
+SET r.source = 'curated', r.rationale = row.rationale, r.run = $run
+RETURN row.isin AS key
 """ for relation in RELATIONS}
 
 ENTITIES = """
@@ -89,30 +103,52 @@ UNWIND $rows AS row
 MATCH (c:Company {isin: row.isin})
 MATCH (x:Factor {code: row.factor})
 MERGE (c)-[r:PRODUCES]->(x)
-SET r.source = 'wikidata', r.product = row.product, r.wikidata_product = row.product_id, r.run = $run
+// A hand-checked link written in this run keeps its source; Wikidata only adds the product it names.
+SET r.source = CASE WHEN r.source = 'curated' AND r.run = $run THEN 'curated' ELSE 'wikidata' END,
+    r.product = row.product, r.wikidata_product = row.product_id, r.run = $run
 """
 
 STALE = """
 MATCH ()-[r:PRODUCES|CONSUMES]->(:Factor)
-WHERE r.run IS NOT NULL AND r.run <> $run AND r.source IN ['sector_map', 'wikidata']
+WHERE r.run IS NOT NULL AND r.run <> $run AND r.source IN ['sector_map', 'curated', 'wikidata']
 DELETE r
 """
 
 
-def load(client: Neo4jClient, factors: list[dict], industry_rows: list[dict], wikidata_rows: list[dict]) -> dict:
-    """Write factors, industry links and Wikidata company links; remove links from older runs."""
+def write_by_relation(client: Neo4jClient, queries: dict, rows: list[dict], key: str, run_id: str) -> tuple[int, list]:
+    """Run the per-relation queries; return the number of links written and the keys that wrote none."""
+    written = []
+    for relation in RELATIONS:
+        subset = [row for row in rows if row["relation"] == relation]
+        written += [record["key"] for record in client.write(queries[relation], {"rows": subset, "run": run_id})]
+    missing = sorted({row[key] for row in rows} - set(written))
+    return len(written), missing
+
+
+def load(
+    client: Neo4jClient,
+    factors: list[dict],
+    industry_rows: list[dict],
+    wikidata_rows: list[dict],
+    curated_rows: list[dict] | None = None,
+) -> dict:
+    """Write factors, industry, curated and Wikidata links; remove links from older runs; report what was written."""
     run_id = datetime.now(timezone.utc).isoformat(timespec="seconds")
     client.write(FACTORS, {"rows": factors})
-    for relation in RELATIONS:
-        rows = [row for row in industry_rows if row["relation"] == relation]
-        client.write(INDUSTRY_LINKS[relation], {"rows": rows, "run": run_id})
+    industry_written, industry_missing = write_by_relation(
+        client, INDUSTRY_LINKS, industry_rows, "industry_code", run_id
+    )
+    curated_written, curated_missing = write_by_relation(client, CURATED_LINKS, curated_rows or [], "isin", run_id)
     entities, links, unmatched = company_links(wikidata_rows, read_seed("product_factors.csv"))
     client.write(ENTITIES, {"rows": entities})
     client.write(COMPANY_PRODUCES, {"rows": links, "run": run_id})
     client.write(STALE, {"run": run_id})
     return {
         "factors": len(factors),
-        "industry_links": len(industry_rows),
+        "industry_links_written": industry_written,
+        "industry_codes_without_link": industry_missing,
+        "curated_links_written": curated_written,
+        "curated_isins_not_in_graph": curated_missing,
         "companies_on_wikidata": len(entities),
         "company_produces": len(links),
         "unmatched_products": sum(unmatched.values()),
@@ -125,4 +161,10 @@ def run(client: Neo4jClient, settings: Settings) -> dict:
     del settings
     isins = [row["isin"] for row in client.read("MATCH (c:Company) RETURN c.isin AS isin ORDER BY isin")]
     wikidata_rows = wikidata.products_by_isin(isins)
-    return load(client, read_seed("factors.csv"), read_seed("industry_factors.csv"), wikidata_rows)
+    return load(
+        client,
+        read_seed("factors.csv"),
+        read_seed("industry_factors.csv"),
+        wikidata_rows,
+        read_seed("company_factors.csv"),
+    )
