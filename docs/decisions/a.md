@@ -76,3 +76,15 @@ First real run: 72 s; 12 factors; 28 industry links (22 CONSUMES, 6 PRODUCES); 1
 Wikidata; 58 company `PRODUCES`; 1,386 products left unmatched (software, financial services, cars...), counted
 in the report. PEA companies with a declared dependency through their industry: gas 35, aluminium 20, oil 16,
 copper 15, gold 7, wheat 7.
+
+## Review of #24 (27 Oct)
+
+- 2026-10-27 · Saty found that for ISINs without a home rule the fallback picked the **US OTC line** (Tencent →
+  `TCTZF`, National Bank of Greece → `NBGIF`): 216 companies, some PEA-eligible; OTC prices barely move, which
+  would pull betas towards 0. Now: exchanges of the **listing country** (from SSGA) first, then of the ISIN country
+  (new rules for GR, CZ, HU, IL, TH, MY, ID, PH, NZ, KY, BM, codes checked against the OpenFIGI answers), then a
+  fallback **without US**; a US line is used only when the share trades in the US. Result: 2,367 tickers,
+  **0 OTC-looking tickers** (was 6 after the first fix, and ~216 before). Aegon → `AGN.AS`, Tencent → `0700.HK`,
+  CEZ → `CEZ.PR`. No ticker is better than an OTC ticker: C1 skips companies without one.
+- 2026-10-27 · `Company.as_of` = date of the last holdings file the company was in. A company that leaves every
+  index keeps its old date, so the current universe is `WHERE c.as_of = $latest` (betas, search, ML features).

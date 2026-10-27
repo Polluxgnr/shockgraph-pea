@@ -1,7 +1,7 @@
 # Role A: data, schema, guardrails, lead (Pollux, `Polluxgnr`)
 
 Read `AGENTS.md` first. You own real-data ingestion, the schema, the Cypher guardrail, CI, the modeling
-documentation and the final README. Your PRs are reviewed by **c** (`exilonn`); you review **b** (`tiltoee`).
+documentation and the final README. Your PRs are reviewed by **c** (`exilonn`); you review **b** (`Tiltoe`).
 Branches `feat/a<n>-…`, tests `tests/test_a_*.py`.
 
 As lead you also: keep `main` green (look at `gh run list --branch main` each session), keep

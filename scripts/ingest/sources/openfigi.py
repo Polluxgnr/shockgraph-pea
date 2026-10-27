@@ -51,6 +51,15 @@ YAHOO_SUFFIX = {
     "KK": ".KW",
     "CI": ".SN",
     "EY": ".CA",
+    "GA": ".AT",
+    "CP": ".PR",
+    "HB": ".BD",
+    "IT": ".TA",
+    "TB": ".BK",
+    "MK": ".KL",
+    "IJ": ".JK",
+    "PM": ".PS",
+    "NZ": ".NZ",
 }
 
 # Preferred exchanges per country of the ISIN (home listing first).
@@ -92,20 +101,38 @@ HOME_EXCHANGES = {
     "KW": ["KK"],
     "CL": ["CI"],
     "EG": ["EY"],
+    "GR": ["GA"],
+    "CZ": ["CP"],
+    "HU": ["HB"],
+    "IL": ["IT"],
+    "TH": ["TB"],
+    "MY": ["MK"],
+    "ID": ["IJ"],
+    "PH": ["PM"],
+    "NZ": ["NZ"],
+    "KY": ["HK", "US"],
+    "BM": ["HK", "US"],
 }
-FALLBACK_EXCHANGES = ["US", "LN", "FP", "GY", "NA", "HK"]
+# No "US" here: for a non-US ISIN the US line is usually an OTC quote that barely trades (Tencent -> TCTZF),
+# which would pull its betas towards 0. No ticker is better than an OTC ticker: C1 skips companies without one.
+FALLBACK_EXCHANGES = ["LN", "FP", "GY", "NA", "HK"]
 
 
-def yahoo_symbol(isin: str, listings: list[dict]) -> tuple[str | None, str | None]:
+def yahoo_symbol(isin: str, listings: list[dict], listing_country: str | None = None) -> tuple[str | None, str | None]:
     """Pick the home listing of an ISIN and return (Yahoo symbol, FIGI), or (None, None).
 
-    The home exchange is chosen from the ISIN country; only equity listings with a known Yahoo suffix count.
+    Order: exchanges of the country where the index provider says the share trades (`listing_country`, ISO
+    code), then those of the ISIN country, then a short non-US fallback. Aegon is incorporated in Bermuda but
+    trades in Amsterdam: AGN.AS, not the OTC line AEGOF. Only equity listings with a known Yahoo suffix count.
     """
     by_exchange = {}
     for listing in listings:
         if listing.get("marketSector") == "Equity" and listing.get("exchCode") in YAHOO_SUFFIX:
             by_exchange.setdefault(listing["exchCode"], listing)
-    for exchange in HOME_EXCHANGES.get(isin[:2], []) + FALLBACK_EXCHANGES:
+    order = HOME_EXCHANGES.get(listing_country or "", []) + HOME_EXCHANGES.get(isin[:2], []) + FALLBACK_EXCHANGES
+    if listing_country and listing_country != "US" and not isin.startswith("US"):
+        order = [exchange for exchange in order if exchange != "US"]  # it trades elsewhere: a US line is OTC
+    for exchange in order:
         if exchange in by_exchange:
             listing = by_exchange[exchange]
             ticker = str(listing["ticker"]).replace("/", "-").replace(" ", "-")
