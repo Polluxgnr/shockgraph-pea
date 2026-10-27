@@ -132,3 +132,52 @@ def test_mini_graph_links_are_never_removed(loaded):
     client, _ = loaded
     count = client.read("MATCH (:Industry)-[r:PRODUCES|CONSUMES]->(:Factor) WHERE r.run IS NULL RETURN count(r) AS n")
     assert count[0]["n"] == 5
+
+
+# --- review of #25 --------------------------------------------------------------------------------
+
+
+def test_industry_map_only_keeps_lines_true_for_almost_every_member():
+    """Metals & Mining and luxury are too mixed (Newmont does not produce aluminium, Nike buys no gold)."""
+    codes = {row["industry_code"] for row in read("industry_factors.csv")}
+    assert "METALS_MINING" not in codes and "TEXTILES_APPAREL_LUXURY_GOODS" not in codes
+
+
+def test_curated_company_links_are_well_formed():
+    """Valid ISINs, known commodity factors, a justification on every line, no duplicate."""
+    factors = {row["code"]: row["kind"] for row in read("factors.csv")}
+    rows = read("company_factors.csv")
+    assert len(rows) >= 40
+    keys = [(row["isin"], row["relation"], row["factor"]) for row in rows]
+    assert len(keys) == len(set(keys))
+    for row in rows:
+        assert len(row["isin"]) == 12 and row["isin"].isalnum(), row
+        assert row["relation"] in declared.RELATIONS and factors[row["factor"]] == "commodity", row
+        assert row["rationale"], row
+
+
+@pytest.mark.neo4j
+def test_report_counts_links_written_and_lists_what_wrote_none(neo4j_client, monkeypatch):
+    """An industry code or ISIN that is not in the graph is reported instead of disappearing silently."""
+    cleanup = "MATCH (n) WHERE n.code IN ['TEST-a-OIL', 'TEST_A2_AIRLINES'] OR n.isin = 'ZZTEST000011' DETACH DELETE n"
+    neo4j_client.write(cleanup)
+    neo4j_client.write("CREATE (:Industry {code: 'TEST_A2_AIRLINES', name: 'Test airlines'})")
+    neo4j_client.write("CREATE (:Company {isin: 'ZZTEST000011', name: 'Test jeweller'})")
+    monkeypatch.setattr(declared, "read_seed", lambda name: [])
+    industry = INDUSTRY + [
+        {"industry_code": "TEST_A2_RENAMED", "relation": "CONSUMES", "factor": "TEST-a-OIL", "rationale": "x"}
+    ]
+    curated = [
+        {"isin": "ZZTEST000011", "relation": "CONSUMES", "factor": "TEST-a-OIL", "rationale": "test"},
+        {"isin": "ZZTEST000099", "relation": "PRODUCES", "factor": "TEST-a-OIL", "rationale": "not in graph"},
+    ]
+    try:
+        report = declared.load(neo4j_client, FACTORS[:1], industry, [], curated)
+        assert report["industry_links_written"] == 1 and report["industry_codes_without_link"] == ["TEST_A2_RENAMED"]
+        assert report["curated_links_written"] == 1 and report["curated_isins_not_in_graph"] == ["ZZTEST000099"]
+        source = neo4j_client.read(
+            "MATCH (:Company {isin: 'ZZTEST000011'})-[r:CONSUMES]->() RETURN r.source AS source, r.rationale AS why"
+        )
+        assert source == [{"source": "curated", "why": "test"}]
+    finally:
+        neo4j_client.write(cleanup)
