@@ -136,3 +136,6 @@ all true on reading**, 1 confirmed (SLB → TotalEnergies, 0.95). Precision firs
   relationship type scan of every claim). Now the start of the query is chosen in Python from constant fragments:
   company → `NodeUniqueIndexSeek` on `Company.isin`, status → `NodeIndexSeek` on `Claim.status`; a test checks
   the operators in the EXPLAIN plan.
+- 2026-10-27 · The 3 ETFs marked "to check" were verified on the issuers' documents: PCEU 0.15 % synthetic (Amundi
+  factsheet 30/09/2026, unchanged); ETZ **0.19 % synthetic** (BNP Paribas AM KID 16/04/2026; it was wrongly 0.20 %
+  physical); VWCE **0.14 %** physical by sampling (Vanguard factsheet 30/09/2026; it was 0.19 %).
