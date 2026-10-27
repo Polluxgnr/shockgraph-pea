@@ -1,0 +1,15 @@
+isin,name,ticker,issuer,ter,replication,pea_eligible,index,source_url,checked
+LU1681043599,Amundi MSCI World UCITS ETF Acc,CW8.PA,Amundi,0.38,synthetic,true,IDX_WORLD,https://www.amundietf.fr/fr/particuliers/produits/equity/amundi-msci-world-ucits-etf-acc/lu1681043599,isin:openfigi
+FR0011869353,Amundi PEA Monde (MSCI World) UCITS ETF,EWLD.PA,Amundi,0.45,synthetic,true,IDX_WORLD,https://www.amundietf.fr/fr/particuliers/produits/equity/amundi-pea-monde-msci-world-ucits-etf-acc/fr0011869353,isin:openfigi
+IE0002XZSHO1,iShares MSCI World Swap PEA UCITS ETF,WPEA.PA,iShares,0.25,synthetic,true,IDX_WORLD,https://www.ishares.com/fr/particuliers/fr/produits/335178/,isin:openfigi
+FR0011871128,Amundi PEA S&P 500 UCITS ETF,PSP5.PA,Amundi,0.15,synthetic,true,IDX_SP500,https://www.amundietf.fr/fr/particuliers/produits/equity/amundi-pea-s-p-500-ucits-etf-acc/fr0011871128,isin:openfigi
+FR0011550185,BNP Paribas Easy S&P 500 UCITS ETF EUR C,ESE.PA,BNP Paribas AM,0.15,synthetic,true,IDX_SP500,https://www.bnpparibas-am.com/fr-fr/investisseur-particulier/fundsheet/actions/bnp-paribas-easy-s-p-500-ucits-etf-eur-c-fr0011550185/,isin:openfigi
+FR0011871110,Amundi PEA Nasdaq-100 UCITS ETF,PUST.PA,Amundi,0.30,synthetic,true,IDX_NASDAQ100,https://www.amundietf.fr/fr/particuliers/produits/equity/amundi-pea-nasdaq-100-ucits-etf-acc/fr0011871110,isin:openfigi
+FR0013412020,Amundi PEA MSCI Emerging ESG Transition UCITS ETF,PAEEM.PA,Amundi,0.30,synthetic,true,IDX_EM,https://www.amundietf.fr/fr/particuliers/produits/equity/fr0013412020,isin:openfigi; index is an ESG variant of MSCI EM
+FR0013412038,Amundi PEA MSCI Europe UCITS ETF,PCEU.PA,Amundi,0.15,synthetic,true,IDX_EUROPE,https://www.amundietf.fr/fr/particuliers/produits/equity/fr0013412038,isin:openfigi; ter and replication to check
+FR0007052782,Amundi CAC 40 UCITS ETF Dist,CAC.PA,Amundi,0.25,physical,true,IDX_CAC40,https://www.amundietf.fr/fr/particuliers/produits/equity/amundi-cac-40-ucits-etf-dist/fr0007052782,isin:openfigi
+FR0011550193,BNP Paribas Easy Stoxx Europe 600 UCITS ETF,ETZ.PA,BNP Paribas AM,0.20,physical,true,IDX_EUROPE,https://www.bnpparibas-am.com/fr-fr/investisseur-particulier/fundsheet/actions/bnp-paribas-easy-stoxx-europe-600-ucits-etf-eur-c-fr0011550193/,isin:openfigi; ter and replication to check; Stoxx 600 approximated by MSCI Europe
+IE00B4L5Y983,iShares Core MSCI World UCITS ETF,IWDA.AS,iShares,0.20,physical,false,IDX_WORLD,https://www.ishares.com/uk/individual/en/products/251882/,isin:openfigi
+IE00BK5BQT80,Vanguard FTSE All-World UCITS ETF Acc,VWCE.DE,Vanguard,0.19,physical,false,IDX_ACWI,https://www.vanguard.co.uk/professional/product/etf/equity/9679/ftse-all-world-ucits-etf-usd-accumulating,isin:openfigi; ter to check; FTSE All-World approximated by MSCI ACWI
+IE00B5BMR087,iShares Core S&P 500 UCITS ETF,CSPX.L,iShares,0.07,physical,false,IDX_SP500,https://www.ishares.com/uk/individual/en/products/253743/,isin:openfigi
+IE0032077012,Invesco EQQQ Nasdaq-100 UCITS ETF,EQQQ.L,Invesco,0.30,physical,false,IDX_NASDAQ100,https://etf.invesco.com/gb/private/en/product/invesco-eqqq-nasdaq-100-ucits-etf-dist/,isin:openfigi

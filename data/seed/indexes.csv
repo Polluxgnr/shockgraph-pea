@@ -1,0 +1,8 @@
+code,name,provider,method,source,base
+IDX_ACWI,MSCI ACWI (proxy),MSCI,ssga_holdings,spyy-gy,
+IDX_SP500,S&P 500 (proxy),S&P Dow Jones,ssga_holdings,spy5-gy,
+IDX_EUROPE,MSCI Europe (proxy),MSCI,ssga_holdings,ero-fp,
+IDX_EM,MSCI Emerging Markets (proxy),MSCI,ssga_holdings,spym-gy,
+IDX_WORLD,MSCI World (proxy: ACWI minus EM),MSCI,derived_difference,spyy-gy,IDX_EM
+IDX_NASDAQ100,Nasdaq-100 (proxy: market-cap weighted),Nasdaq,derived_members,nasdaq_api,
+IDX_CAC40,CAC 40 (proxy: float-cap weighted),Euronext,derived_members,wikipedia_cac40,

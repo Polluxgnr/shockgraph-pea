@@ -1,0 +1,67 @@
+code,name,eu_eea
+AE,United Arab Emirates,false
+AN,Netherlands Antilles,false
+AT,Austria,true
+AU,Australia,false
+BE,Belgium,true
+BG,Bulgaria,true
+BM,Bermuda,false
+BR,Brazil,false
+CA,Canada,false
+CH,Switzerland,false
+CL,Chile,false
+CN,China,false
+CO,Colombia,false
+CY,Cyprus,true
+CZ,Czechia,true
+DE,Germany,true
+DK,Denmark,true
+EE,Estonia,true
+EG,Egypt,false
+ES,Spain,true
+FI,Finland,true
+FR,France,true
+GB,United Kingdom,false
+GR,Greece,true
+HK,Hong Kong,false
+HR,Croatia,true
+HU,Hungary,true
+ID,Indonesia,false
+IE,Ireland,true
+IL,Israel,false
+IN,India,false
+IS,Iceland,true
+IT,Italy,true
+JE,Jersey,false
+JP,Japan,false
+KR,South Korea,false
+KW,Kuwait,false
+KY,Cayman Islands,false
+LI,Liechtenstein,true
+LR,Liberia,false
+LT,Lithuania,true
+LU,Luxembourg,true
+LV,Latvia,true
+MT,Malta,true
+MX,Mexico,false
+MY,Malaysia,false
+NL,Netherlands,true
+NO,Norway,true
+NZ,New Zealand,false
+PH,Philippines,false
+PL,Poland,true
+PT,Portugal,true
+QA,Qatar,false
+RO,Romania,true
+RU,Russia,false
+SA,Saudi Arabia,false
+SE,Sweden,true
+SG,Singapore,false
+SI,Slovenia,true
+SK,Slovakia,true
+TH,Thailand,false
+TR,Turkey,false
+TW,Taiwan,false
+US,United States,false
+VG,British Virgin Islands,false
+ZA,South Africa,false
