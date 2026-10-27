@@ -1,7 +1,7 @@
 # Role C: estimates, GDS, ML, agent (Saty, `exilonn`)
 
 Read `AGENTS.md` first. You own the statistical estimates (betas, correlations), GDS, the ML model, the
-LangGraph agent and the notebook. Your PRs are reviewed by **b** (`tiltoee`); you review **a** (`Polluxgnr`).
+LangGraph agent and the notebook. Your PRs are reviewed by **b** (`Tiltoe`); you review **a** (`Polluxgnr`).
 Branches `feat/c<n>-…`, tests `tests/test_c_*.py`.
 GDS and the agent are tested on the mini graph; betas on synthetic series; you do not wait for role A.
 

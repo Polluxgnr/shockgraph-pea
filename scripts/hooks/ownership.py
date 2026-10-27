@@ -6,7 +6,7 @@ ask the lead (role A) to add it here first.
 
 from fnmatch import fnmatch
 
-ROLES = {"a": "Pollux (Polluxgnr)", "b": "Eliott (tiltoee)", "c": "Saty (exilonn)"}
+ROLES = {"a": "Pollux (Polluxgnr)", "b": "Eliott (Tiltoe)", "c": "Saty (exilonn)"}
 
 OWNERS: dict[str, list[str]] = {
     "a": [
