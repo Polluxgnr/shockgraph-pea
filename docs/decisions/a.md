@@ -125,3 +125,14 @@ Run after the review: 24 industry links, 45 curated, 50 Wikidata-only, 0 code or
 Third real run (60 largest PEA companies, 90 days): 100 s, 2,727 headlines, 281 filtered as corporate finance,
 154 candidate pairs, 145 unresolved (supplier outside our universe or ambiguous), 9 pieces of evidence, **4 claims,
 all true on reading**, 1 confirmed (SLB → TotalEnergies, 0.95). Precision first, recall low by design.
+
+## Review of #26 (27 Oct)
+
+- 2026-10-27 · Saty showed that one wire story listed by Google News under several publishers (Reuters reprinted by
+  Yahoo Finance, MarketScreener...) could still confirm a claim. Now one vote per **distinct story** (normalised
+  headline, `Article.title_key`), and `confirmed` needs two distinct stories from two publishers. Real run:
+  SLB → TotalEnergies stays confirmed with 4 distinct stories from 6 publishers.
+- 2026-10-27 · `HypothesisService`: `$isin IS NULL OR ...` in one query prevented any index use (EXPLAIN showed a
+  relationship type scan of every claim). Now the start of the query is chosen in Python from constant fragments:
+  company → `NodeUniqueIndexSeek` on `Company.isin`, status → `NodeIndexSeek` on `Claim.status`; a test checks
+  the operators in the EXPLAIN plan.
