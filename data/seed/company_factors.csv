@@ -1,0 +1,46 @@
+isin,name,relation,factor,rationale
+FR0000121014,LVMH,CONSUMES,GOLD,Jewellery and watch houses (Tiffany & Co. and Bulgari) buy gold
+CH0210483332,Richemont,CONSUMES,GOLD,Cartier and Van Cleef & Arpels: jewellery is the largest division
+FR0000052292,Hermes International,CONSUMES,GOLD,Jewellery and watches (a small part of sales)
+INE280A01028,Titan Company,CONSUMES,GOLD,Tanishq gold jewellery is most of its revenue
+DK0060252690,Pandora,CONSUMES,GOLD,Gold and silver jewellery maker
+CH0012255151,Swatch Group,CONSUMES,GOLD,Gold watch cases (Omega and Breguet)
+KYG211461085,Chow Tai Fook,CONSUMES,GOLD,Gold jewellery retailer and maker
+FR0000121485,Kering,CONSUMES,GOLD,Boucheron and Pomellato jewellery
+US35671D8570,Freeport-McMoRan,PRODUCES,COPPER,One of the largest copper miners
+US35671D8570,Freeport-McMoRan,PRODUCES,GOLD,Grasberg mine produces gold as well as copper
+US84265V1052,Southern Copper,PRODUCES,COPPER,Copper miner
+JE00B4T3BW64,Glencore,PRODUCES,COPPER,Copper is its largest mining commodity
+GB0007188757,Rio Tinto plc,PRODUCES,COPPER,Copper division
+GB0007188757,Rio Tinto plc,PRODUCES,ALUMINIUM,Aluminium division (smelters)
+AU000000RIO1,Rio Tinto Limited,PRODUCES,COPPER,Same company as Rio Tinto plc (dual listing)
+AU000000RIO1,Rio Tinto Limited,PRODUCES,ALUMINIUM,Same company as Rio Tinto plc (dual listing)
+AU000000BHP4,BHP Group,PRODUCES,COPPER,Copper division (Escondida)
+GB00BTK05J60,Anglo American,PRODUCES,COPPER,Copper is its main business after restructuring
+GB0000456144,Antofagasta,PRODUCES,COPPER,Chilean copper miner
+CA3359341052,First Quantum Minerals,PRODUCES,COPPER,Copper miner
+CNE100000B24,Zijin Mining (A),PRODUCES,COPPER,Copper and gold miner
+CNE100000B24,Zijin Mining (A),PRODUCES,GOLD,Copper and gold miner
+CNE100000502,Zijin Mining (H),PRODUCES,COPPER,Same company as the A shares
+CNE100000502,Zijin Mining (H),PRODUCES,GOLD,Same company as the A shares
+HK0001200002,Zijin Gold International,PRODUCES,GOLD,Gold mining subsidiary of Zijin
+MXP370841019,Grupo Mexico,PRODUCES,COPPER,Parent of Southern Copper
+PLKGHM000017,KGHM Polska Miedz,PRODUCES,COPPER,Polish copper miner and smelter (PEA-eligible)
+SE0020050417,Boliden,PRODUCES,COPPER,Swedish copper and zinc miner and smelter (PEA-eligible)
+CA5503721063,Lundin Mining,PRODUCES,COPPER,Copper miner
+CA8787422044,Teck Resources,PRODUCES,COPPER,Copper miner after selling its coal business
+CA46579R1047,Ivanhoe Mines,PRODUCES,COPPER,Kamoa-Kakula copper mine
+US6516391066,Newmont,PRODUCES,GOLD,Largest gold miner
+CA06849F1080,Barrick,PRODUCES,GOLD,Gold miner (and copper)
+CA06849F1080,Barrick,PRODUCES,COPPER,Copper mines (Lumwana and Zaldivar)
+CA0084741085,Agnico Eagle,PRODUCES,GOLD,Gold miner
+CA4969024047,Kinross Gold,PRODUCES,GOLD,Gold miner
+ZAE000018123,Gold Fields,PRODUCES,GOLD,Gold miner
+GB00BRXH2664,AngloGold Ashanti,PRODUCES,GOLD,Gold miner
+AU000000NST8,Northern Star Resources,PRODUCES,GOLD,Gold miner
+NO0005052605,Norsk Hydro,PRODUCES,ALUMINIUM,Aluminium producer (PEA-eligible)
+INE038A01020,Hindalco,PRODUCES,ALUMINIUM,Aluminium producer (owns Novelis)
+KYG211501005,China Hongqiao,PRODUCES,ALUMINIUM,Largest private aluminium smelter
+CNE1000001T8,Aluminum Corp of China (H),PRODUCES,ALUMINIUM,Chalco aluminium producer
+CNE1000000T0,Aluminum Corp of China (A),PRODUCES,ALUMINIUM,Same company as the H shares
+SA123GA0ITH7,Ma'aden,PRODUCES,ALUMINIUM,Saudi aluminium and gold producer

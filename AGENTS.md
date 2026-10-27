@@ -13,7 +13,7 @@ git config --get shockgraph.role     # a, b or c
 | Role | Human | GitHub | Owns |
 | --- | --- | --- | --- |
 | `a` | Pollux (lead) | `Polluxgnr` | data ingestion, schema, guardrails, CI, modeling docs, README |
-| `b` | Eliott | `tiltoee` | API services, Docker / Nginx / Ollama, performance, agent evaluation |
+| `b` | Eliott | `Tiltoe` | API services, Docker / Nginx / Ollama, performance, agent evaluation |
 | `c` | Saty | `exilonn` | prices & betas, GDS, ML, LangGraph agent, notebook |
 
 If the command prints nothing, stop and ask your human to run `make role ROLE=<letter>`.

@@ -38,7 +38,7 @@ An API response or an agent answer carries the truth level of every number it sh
 
 | Label | Key (unique) | Properties |
 | --- | --- | --- |
-| `Company` | `isin` | `name`, `ticker` (Yahoo symbol, e.g. `TTE.PA`), `lei`, `currency`, `market_cap_eur`, `pea_eligible` (bool), `wikidata_id`, `figi` |
+| `Company` | `isin` | `name`, `ticker` (Yahoo symbol, e.g. `TTE.PA`), `lei`, `currency`, `market_cap_eur`, `pea_eligible` (bool), `wikidata_id`, `figi`, `listing_country`, `market_cap_method`, `as_of` (date of the last holdings file the company was in: filter `c.as_of = max(as_of)` for the current universe) |
 | `Fund` | `isin` | `name`, `ticker`, `issuer`, `ter` (annual fee, %), `replication` (`physical` / `synthetic`), `pea_eligible` (bool), `source_url` |
 | `Index` | `code` | `name`, `provider` |
 | `Sector` | `code` | `name` (GICS-like, 11 sectors) |
@@ -63,7 +63,7 @@ The graph only stores what is derived from them (`SENSITIVE_TO`, `CORRELATED_WIT
 | `HEADQUARTERED_IN` | Company → Country | | fact |
 | `PRODUCES` | Company or Industry → Factor | `source` | fact |
 | `CONSUMES` | Company or Industry → Factor | `source` | fact |
-| `SENSITIVE_TO` | Company or Fund → Factor | `beta`, `r2`, `t_stat`, `n_obs`, `window_start`, `window_end`, `method` | estimate |
+| `SENSITIVE_TO` | Company or Fund → Factor | `beta`, `r2` (**partial** r² of the factor, t² / (t² + dof)), `t_stat`, `n_obs`, `window_start`, `window_end`, `method`, `move_unit` (`pct` for prices, `pp` for rates: `impact_pct = beta × move` with a rate move in percentage points) | estimate |
 | `CORRELATED_WITH` | Company → Company (stored once, `a.isin < b.isin`, queried undirected) | `rho`, `window_end` | estimate |
 | `PREDICTED_SENSITIVITY` | Company → Factor | `prob`, `direction` (`up` / `down`), `model_version` | prediction |
 | `SUBJECT` / `OBJECT` | Claim → Company | | hypothesis |
