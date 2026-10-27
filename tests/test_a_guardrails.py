@@ -22,6 +22,13 @@ ACCEPTED = [
     "RETURN x.code, count(c) LIMIT 10;",
     "MATCH (c:Company {isin: $isin}) CALL { WITH c MATCH (c)-[:CORRELATED_WITH]-(o:Company) "
     "RETURN o ORDER BY o.name LIMIT 5 } RETURN c.name, collect(o.name) AS peers LIMIT 1",
+    # map projection (review of #23): `beta: r` is not a label
+    "MATCH (c:Company)-[r:SENSITIVE_TO]->(x:Factor) RETURN c {.name, beta: r.beta} AS row LIMIT 5",
+    # LIMIT followed by another clause is still a plain integer
+    "MATCH (c:Company) WITH c ORDER BY c.market_cap_eur DESC LIMIT 10 MATCH (c)-[:IN_INDUSTRY]->(n:Industry) "
+    "RETURN c.name, n.name LIMIT 10",
+    # a bounded relationship quantifier is fine
+    "MATCH (a:Company {isin: $isin})-[:CORRELATED_WITH]-{1,3}(b:Company) RETURN b.name LIMIT 5",
 ]
 
 REFUSED = [
@@ -48,12 +55,17 @@ REFUSED = [
     ("MATCH (a:Company)((:Company)-[:CORRELATED_WITH]-(:Company))+(b) RETURN b LIMIT 5", "unbounded quantified path"),
     ("MATCH (c:Company) RETURN c", "needs a LIMIT"),
     ("MATCH (c:Company) RETURN c LIMIT 1000", "LIMIT 1000 is above 100"),
-    ("MATCH (c:Company) RETURN c LIMIT $limit", "integer literal"),
+    ("MATCH (c:Company) RETURN c LIMIT $limit", "single integer literal"),
     ("MATCH (c:Company) /* hidden */ DETACH /* x */ DELETE c", "write clause DELETE"),
     ("SHOW DATABASES YIELD name RETURN name LIMIT 5", "a query must start with"),
     ("USE system MATCH (n) RETURN n LIMIT 1", "clause USE"),
     ("MATCH (c:Company) WITH c LIMIT 5", "must RETURN"),
     ("", "empty query"),
+    # bypasses found in the review of #23 (they compile on Neo4j 5.26)
+    ("MATCH (a:Company {isin: $isin})-[:CORRELATED_WITH]-{1,50}(b:Company) RETURN b.name LIMIT 5", "longer than 6"),
+    ("MATCH (a:Company {isin: $isin})-[:CORRELATED_WITH]-+(b:Company) RETURN b.name LIMIT 5", "unbounded quantified"),
+    ("MATCH (a:Company)-->*(b:Company) RETURN b LIMIT 5", "unbounded quantified"),
+    ("MATCH (c:Company) RETURN c.name LIMIT 10 + 100000", "single integer literal"),
 ]
 
 
