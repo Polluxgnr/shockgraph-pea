@@ -242,3 +242,48 @@ def test_stale_constituents_are_removed(loaded):
     universe.load(loaded, newer)
     count = loaded.read("MATCH (:Index {code: 'TEST-a-IDX'})-[r:CONSTITUENT]->() RETURN count(r) AS links")
     assert count[0]["links"] == 2
+
+
+# --- review of #24 --------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("isin", "listings", "expected"),
+    [
+        # real OpenFIGI answers: the home line must win over the US OTC line
+        ("KYG875721634", [listing("US", "TCTZF"), listing("GR", "NNND"), listing("HK", "700")], "0700.HK"),
+        ("GRS003003035", [listing("US", "NBGIF"), listing("GR", "NAGF"), listing("GA", "ETE")], "ETE.AT"),
+        ("CZ0005112300", [listing("US", "CZAVF"), listing("GR", "CEZ"), listing("CP", "CEZ")], "CEZ.PR"),
+        ("TH0646010Z18", [listing("US", "PTTGF"), listing("TB", "PTT")], "PTT.BK"),
+    ],
+)
+def test_home_listing_beats_us_otc(isin, listings, expected):
+    """Tencent, National Bank of Greece, CEZ, PTT: home exchange, not the OTC quote."""
+    assert yahoo_symbol(isin, listings)[0] == expected
+
+
+def test_listing_country_comes_first():
+    """Incorporated in Bermuda, trades in Amsterdam / Singapore: the listing country wins over the ISIN country."""
+    aegon = [listing("US", "AEGOF"), listing("NA", "AGN")]
+    assert yahoo_symbol("BMG0112X1056", aegon, listing_country="NL")[0] == "AGN.AS"
+    jardine = [listing("US", "JARLF"), listing("SP", "J36")]
+    assert yahoo_symbol("BMG507361001", jardine, listing_country="SG")[0] == "J36.SI"
+    # trades in Hong Kong per the index, no HK line in OpenFIGI: no ticker rather than the OTC line
+    assert yahoo_symbol("BMG507361001", [listing("US", "JARLF")], listing_country="HK") == (None, None)
+
+
+def test_no_us_fallback_for_non_us_isins():
+    """A non-US ISIN with only a US line gets no ticker (an OTC price would flatten its betas)."""
+    assert yahoo_symbol("AEA000201011", [listing("US", "ABCXF")]) == (None, None)
+    assert yahoo_symbol("US0378331005", [listing("US", "AAPL")])[0] == "AAPL"
+
+
+@pytest.mark.neo4j
+def test_companies_carry_the_date_of_their_last_holdings_file(loaded):
+    """A company that left every index keeps its old as_of, so queries can filter the current universe."""
+    newer = dict(TEST_DATA, as_of="2026-10-23", companies=TEST_DATA["companies"][:2], constituents=[])
+    universe.load(loaded, newer)
+    rows = loaded.read(
+        "MATCH (c:Company) WHERE c.isin STARTS WITH 'ZZTEST' RETURN c.isin AS isin, toString(c.as_of) AS as_of ORDER BY isin"
+    )
+    assert [row["as_of"] for row in rows] == ["2026-10-23", "2026-10-23", "2026-10-22"]
