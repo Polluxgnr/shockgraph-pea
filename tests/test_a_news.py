@@ -140,11 +140,14 @@ def test_noisy_or():
     assert news.noisy_or([]) == 0
 
 
-def test_claim_confidence_counts_one_vote_per_publisher_and_never_reaches_one():
-    """Ten syndicated copies of one story are one vote; many publishers are capped at 0.95."""
-    assert news.claim_confidence([("Reuters", 0.6)] * 10) == pytest.approx(0.6)
-    assert news.claim_confidence([("Reuters", 0.6), ("Reuters", 0.8), ("FT", 0.6)]) == pytest.approx(0.92)
-    assert news.claim_confidence([(f"source{i}", 0.6) for i in range(10)]) == news.MAX_CLAIM_CONFIDENCE
+def test_claim_confidence_counts_one_vote_per_story_and_never_reaches_one():
+    """Ten copies of one wire story (same headline, any case or punctuation) are one vote; capped at 0.95."""
+    wire = "SLB wins 15-year TotalEnergies contract"
+    assert news.claim_confidence([(wire, 0.6)] * 5 + [(wire.upper() + "!", 0.6)] * 5) == pytest.approx(0.6)
+    assert news.claim_confidence([(wire, 0.6), (wire, 0.8), ("SLB lands TotalEnergies deal", 0.6)]) == pytest.approx(
+        0.92
+    )
+    assert news.claim_confidence([(f"story {i}", 0.6) for i in range(10)]) == news.MAX_CLAIM_CONFIDENCE
 
 
 @pytest.mark.parametrize(
@@ -249,31 +252,59 @@ def evidence(url: str, confidence: float) -> dict:
     }
 
 
-def article(url: str, source: str) -> dict:
+def article(url: str, source: str, title: str = "Test SLB wins Test TTE contract") -> dict:
     """One article row mentioning both test companies."""
-    return {"url": url, "title": "t", "source": source, "published_at": "2026-10-20",
-            "mentions": ["ZZSLB0000001", "ZZTTE0000002"]}  # fmt: skip
+    return {"url": url, "title": title, "title_key": news.story_key(title), "source": source,
+            "published_at": "2026-10-20", "mentions": ["ZZSLB0000001", "ZZTTE0000002"]}  # fmt: skip
 
 
 @pytest.mark.neo4j
-def test_claim_is_confirmed_by_two_publishers(two_companies):
-    """One source: hypothesis. A second publisher: confirmed, confidence = noisy-OR. Fixture claims untouched."""
+def test_claim_is_confirmed_by_two_stories_from_two_publishers(two_companies):
+    """One story: hypothesis. The same wire story under another publisher: still hypothesis (review of #26).
+    A second, different story from another publisher: confirmed, confidence = noisy-OR. Fixture claims untouched."""
     client, claim = two_companies
-    url_one, url_two = "https://test-a.example/1", "https://test-a.example/2"
-    news.load(client, [article(url_one, "World Oil")], [evidence(url_one, 0.6)])
+    url_one, url_copy, url_two = "https://test-a.example/1", "https://test-a.example/1b", "https://test-a.example/2"
+    news.load(client, [article(url_one, "Reuters")], [evidence(url_one, 0.6)])
     first = client.read("MATCH (q:Claim {claim_id: $id}) RETURN q.status AS status, q.confidence AS c", {"id": claim})
     assert first == [{"status": "hypothesis", "c": pytest.approx(0.6)}]
 
-    news.load(client, [article("https://test-a.example/1b", "World Oil")], [evidence("https://test-a.example/1b", 0.6)])
-    same_source = client.read("MATCH (q:Claim {claim_id: $id}) RETURN q.status AS status", {"id": claim})
-    assert same_source == [{"status": "hypothesis"}]  # a second article from the same publisher is not a confirmation
+    news.load(client, [article(url_copy, "Yahoo Finance")], [evidence(url_copy, 0.6)])
+    syndicated = client.read(
+        "MATCH (q:Claim {claim_id: $id}) RETURN q.status AS status, q.confidence AS c", {"id": claim}
+    )
+    assert syndicated == [{"status": "hypothesis", "c": pytest.approx(0.6)}]  # same headline: one story
 
-    news.load(client, [article(url_two, "Reuters")], [evidence(url_two, 0.6)])
-    news.load(client, [article(url_two, "Reuters")], [evidence(url_two, 0.6)])  # idempotent
+    other = article(url_two, "Financial Times", "Test TTE picks Test SLB for drilling work")
+    news.load(client, [other], [evidence(url_two, 0.6)])
+    news.load(client, [other], [evidence(url_two, 0.6)])  # idempotent
     second = client.read(
-        "MATCH (q:Claim {claim_id: $id})-[e:EXTRACTED_FROM]->() RETURN q.status AS status, q.confidence AS c, count(e) AS n",
+        "MATCH (q:Claim {claim_id: $id})-[e:EXTRACTED_FROM]->() "
+        "RETURN q.status AS status, q.confidence AS c, q.stories AS stories, count(e) AS n",
         {"id": claim},
     )
-    assert second == [{"status": "confirmed", "c": pytest.approx(0.84), "n": 3}]
+    assert second == [{"status": "confirmed", "c": pytest.approx(0.84), "stories": 2, "n": 3}]
     fixture = client.read("MATCH (q:Claim {claim_id: 'c1'}) RETURN q.status AS status, q.confidence AS c")
     assert fixture == [{"status": "hypothesis", "c": 0.8}]
+
+
+def _operators(plan) -> list[str]:
+    """Every operator name of an EXPLAIN plan, depth first."""
+    plan = plan if isinstance(plan, dict) else {"operatorType": plan.operator_type, "children": plan.children}
+    return [plan["operatorType"]] + [name for child in plan.get("children", []) for name in _operators(child)]
+
+
+@pytest.mark.neo4j
+@pytest.mark.parametrize(
+    ("isin", "status", "expected"),
+    [("DETEST000060", None, "NodeUniqueIndexSeek"), (None, "rejected", "NodeIndexSeek")],
+)
+def test_claims_query_starts_from_an_index(neo4j_client, isin, status, expected):
+    """Review of #26: the company query seeks Company.isin, the status query seeks Claim.status (no claim scan)."""
+    from app.services.hypotheses import list_claims_query  # pylint: disable=import-outside-toplevel
+
+    params = {"isin": isin, "status": status, "limit": 20}
+    _, summary, _ = neo4j_client._driver.execute_query(  # pylint: disable=protected-access
+        "EXPLAIN " + list_claims_query(isin, status), params
+    )
+    operators = _operators(summary.plan)
+    assert any(name.startswith(expected) for name in operators), operators
