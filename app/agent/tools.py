@@ -20,7 +20,7 @@ from app.agent.guardrails import CypherValidator
 from app.database.neo4j import Neo4jClient
 from app.models.common import EVIDENCE_PATTERN, ISIN_PATTERN
 from app.models.portfolio import PortfolioRequest, Position
-from app.models.shocks import Shock, ShockRequest
+from app.models.shocks import Shock, ShockRequest, ShockResult
 from app.services.companies import CompanyService, FactorService
 from app.services.gds import GdsService
 from app.services.hypotheses import HypothesisService
@@ -80,15 +80,56 @@ def build_tools(client: Neo4jClient) -> list:
     return build_tools_for(Services.for_client(client))
 
 
-def jsonable(value: Any) -> Any:
-    """Pydantic models and lists of them as plain JSON data; `None` becomes `{"found": False}`."""
+SHOCK_LINES = 8  # lines of each kind a shock result gives the model
+
+
+def jsonable(value: Any, truth: str | None = None) -> Any:
+    """Pydantic models and lists of them as plain JSON data; `None` becomes `{"found": False}`.
+
+    Every row with an `isin` gets its evidence ref (`Company:<isin>`) and, when `truth` is given and the row has
+    none, that truth level: a 7B writer copies these fields far more reliably than it builds them.
+    """
     if value is None:
         return {"found": False}
     if isinstance(value, BaseModel):
-        return value.model_dump(mode="json")
+        value = value.model_dump(mode="json")
     if isinstance(value, list):
-        return [jsonable(item) for item in value]
+        return [jsonable(item, truth) for item in value]
+    if isinstance(value, dict):
+        value = {key: jsonable(item, truth) if isinstance(item, (list, dict)) else item for key, item in value.items()}
+        if isinstance(value.get("isin"), str):
+            value.setdefault("ref", f"Company:{value['isin']}")
+            if truth:
+                value.setdefault("truth", truth)
     return value
+
+
+def compact_shock(result: ShockResult) -> dict:
+    """The part of a shock result the model can use, most useful first.
+
+    The service lists every impacted company, direction-only lines (a declared PRODUCES link, no amount) first:
+    cut to a few thousand characters, the model then never saw an amount. Here: the portfolio, its lines by
+    euro impact, the largest estimated moves, then only a count of the direction-only lines.
+    """
+    lines = result.direct + result.indirect
+    in_portfolio = sorted(
+        (line for line in lines if line.impact_eur is not None), key=lambda line: -abs(line.impact_eur)
+    )
+    estimated = sorted(
+        (line for line in lines if line.impact_eur is None and line.impact_pct is not None),
+        key=lambda line: -abs(line.impact_pct),
+    )
+    direction_only = [line for line in lines if line.impact_pct is None]
+    keep = {"isin", "name", "truth", "impact_pct", "impact_eur", "path"}
+    return {
+        "portfolio_impact_eur": result.portfolio_impact_eur,
+        "portfolio_impact_pct": result.portfolio_impact_pct,
+        "portfolio_lines": jsonable([line.model_dump(include=keep) for line in in_portfolio[:SHOCK_LINES]]),
+        "largest_estimated_moves": jsonable([line.model_dump(include=keep) for line in estimated[:SHOCK_LINES]]),
+        "direction_only_count": len(direction_only),
+        "direction_only_examples": jsonable([line.model_dump(include=keep) for line in direction_only[:3]]),
+        "warnings": result.warnings,
+    }
 
 
 LEGAL_SUFFIXES = {"sa", "se", "ag", "nv", "plc", "inc", "corp", "ltd", "spa", "asa", "ab", "oyj", "sca", "co"}
@@ -142,7 +183,7 @@ def build_tools_for(services: Services) -> list[StructuredTool]:
         """Estimated impact of a factor move in % (e.g. BRENT +20) on companies, and on a portfolio when
         positions are given. Rates move in percentage points."""
         request = ShockRequest(shocks=[Shock(factor_code=factor_code, pct=pct)], depth=depth, positions=positions)
-        return jsonable(services.shocks.simulate(request))
+        return compact_shock(services.shocks.simulate(request))
 
     def portfolio_xray(positions: Positions) -> dict:
         """What a portfolio of stocks and ETFs is really exposed to (look-through of the funds)."""
@@ -154,11 +195,11 @@ def build_tools_for(services: Services) -> list[StructuredTool]:
 
     def clusters(limit: ClusterLimit = 5) -> list:
         """Groups of stocks that move together (Louvain), with the factors most of their members follow."""
-        return jsonable(services.gds.clusters(limit=limit))
+        return jsonable(services.gds.clusters(limit=limit), truth="estimate")
 
     def similar_companies(isin: Isin, k: Neighbours = 5) -> Any:
         """Companies with the most similar position in the correlation network (FastRP embeddings)."""
-        return jsonable(services.gds.similar(isin, k=k))
+        return jsonable(services.gds.similar(isin, k=k), truth="estimate")
 
     def predicted_exposures(isin: Isin) -> Any:
         """Exposures predicted by the ML model where no estimate exists (truth level prediction)."""

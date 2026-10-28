@@ -7,7 +7,7 @@ from langchain_ollama import ChatOllama
 from app.agent import graph as agent_graph
 from app.agent.graph import MAX_TOOL_CALLS, ShockAgent, is_advice_request
 from app.agent.guardrails import ValidationResult
-from app.agent.tools import Services, ambiguous, build_tools
+from app.agent.tools import Services, ambiguous, build_tools, compact_shock, jsonable
 from app.config import Settings
 from app.llm.client import ScriptedChatModel, get_chat_model, tool_call
 from app.models.companies import CompanySummary, Exposure, FactorSummary
@@ -157,7 +157,8 @@ def test_successful_question_with_trace():
     assert [call.tool for call in answer.trace] == ["resolve_factor", "simulate_shock"]
     assert all(call.error is None and call.duration_ms >= 0 for call in answer.trace)
     assert "12.4" in answer.trace[1].result_preview
-    assert answer.trace[1].result["direct"][0]["impact_pct"] == 12.4
+    assert answer.trace[1].result["largest_estimated_moves"][0]["impact_pct"] == 12.4
+    assert answer.trace[1].result["largest_estimated_moves"][0]["ref"] == "Company:FRTEST000011"
     assert answer.claims[0].truth == "estimate" and answer.claims[0].evidence[1] == "Factor:BRENT"
     assert answer.disclaimer
     assert agent.services.shocks.requests[0].shocks[0].pct == 20
@@ -468,3 +469,33 @@ def test_ask_endpoint_with_the_fake_model(api_fake, auth_headers):
     assert api_fake.post("/api/ask", json={"question": "Dois-je acheter Petrolia ?"}, headers=auth_headers).json()[
         "refused"
     ]
+
+
+def test_compact_shock_puts_amounts_before_direction_only_lines():
+    """Direction-only lines are counted, not listed first: the model must see the estimated amounts."""
+    lines = [ImpactLine(isin=f"ZZTEST{index:06d}", name=f"Producer {index}", truth="fact") for index in range(50)]
+    lines += [
+        ImpactLine(isin="ZZTEST900001", name="Small", truth="estimate", impact_pct=1.5),
+        ImpactLine(isin="ZZTEST900002", name="Large", truth="estimate", impact_pct=-9.0),
+        ImpactLine(isin="ZZTEST900003", name="Held", truth="estimate", impact_pct=7.7, impact_eur=77.0),
+    ]
+    compact = compact_shock(ShockResult(direct=lines, portfolio_impact_eur=77.0, portfolio_impact_pct=1.1))
+
+    assert compact["portfolio_impact_eur"] == 77.0
+    assert [line["name"] for line in compact["portfolio_lines"]] == ["Held"]
+    assert [line["name"] for line in compact["largest_estimated_moves"]] == ["Large", "Small"]
+    assert compact["direction_only_count"] == 50 and len(compact["direction_only_examples"]) == 3
+    assert compact["portfolio_lines"][0]["ref"] == "Company:ZZTEST900003"
+
+
+def test_jsonable_adds_refs_and_truth_to_company_rows():
+    """Rows with an isin get their ref; a truth is added only where the row has none."""
+    rows = jsonable([{"isin": "FR0000120271", "name": "TotalEnergies"}, {"isin": "X", "truth": "fact"}], "estimate")
+
+    assert rows[0] == {
+        "isin": "FR0000120271",
+        "name": "TotalEnergies",
+        "ref": "Company:FR0000120271",
+        "truth": "estimate",
+    }
+    assert rows[1]["truth"] == "fact"

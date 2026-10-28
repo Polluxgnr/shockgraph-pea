@@ -22,7 +22,7 @@ from typing import Any, Literal, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.agent.prompts import PLANNER_PROMPT, ROUTER_PROMPT, WRITER_PROMPT
 from app.agent.tools import RESOLVE_TOOLS, Services, build_tools_for
@@ -80,7 +80,8 @@ class WrittenAnswer(BaseModel):
     """Writer output (large model): the answer split into claims with their truth and evidence."""
 
     answer: str
-    claims: list[AgentClaim] = Field(default_factory=list)
+    # required, not defaulted: with an optional field qwen2.5 left the claims out of every answer
+    claims: list[AgentClaim]
 
 
 class AgentState(TypedDict, total=False):
