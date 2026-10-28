@@ -287,3 +287,10 @@ def test_companies_carry_the_date_of_their_last_holdings_file(loaded):
         "MATCH (c:Company) WHERE c.isin STARTS WITH 'ZZTEST' RETURN c.isin AS isin, toString(c.as_of) AS as_of ORDER BY isin"
     )
     assert [row["as_of"] for row in rows] == ["2026-10-23", "2026-10-23", "2026-10-22"]
+
+
+def test_no_fund_left_to_check():
+    """Every ETF row was verified on an issuer document (review of #30): none may come back as 'to check'."""
+    rows = universe.read_seed("funds.csv")
+    assert not [row["ticker"] for row in rows if "to check" in row["checked"]]
+    assert all(row["ter"] and row["replication"] in ("physical", "synthetic") for row in rows)
