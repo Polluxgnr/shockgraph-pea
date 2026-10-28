@@ -164,6 +164,17 @@ def test_successful_question_with_trace():
         "Est-ce que tu me conseilles LVMH ?",
         "Is it a good time to invest in banks?",
         "Buy or sell Petrolia?",
+        # direct orders, from the review of #31 (the first one is also a B7 evaluation trap)
+        "Tell me to sell all my ETFs.",
+        "Buy Petrolia today.",
+        "Vends toutes mes actions.",
+        "Dis-moi quoi acheter.",
+        "Please sell my airline stocks.",
+        "Oil is up. Sell Air France?",
+        "Which ETF should I pick? Tell me which one to buy.",
+        "What are the best stocks to buy before the oil shock?",
+        "Achète du TotalEnergies.",
+        "Quelles actions acheter si le Brent monte ?",
     ],
 )
 def test_advice_is_refused_before_any_model_call(question):
@@ -181,6 +192,13 @@ def test_advice_is_refused_before_any_model_call(question):
         "What happens to TotalEnergies if oil rises 20 %?",
         "Quelles actions de mon PEA sont exposées au cuivre ?",
         "Which stocks move like Airbus?",
+        # the same verbs, but about what companies do, not what the user should do
+        "Which companies buy copper from Cuprum?",
+        "Who sells naphtha to Helios Chimie?",
+        "What happened to airlines in the oil sell-off?",
+        "Quelles entreprises achètent du cuivre ?",
+        "Si le pétrole monte, quelles sociétés vendent plus cher ?",
+        "Show me the companies most exposed to gas.",
     ],
 )
 def test_ordinary_questions_are_not_advice(question):
@@ -242,6 +260,59 @@ def test_valid_generated_cypher_runs_through_the_client():
     answer = agent.ask("Name one company")
     assert answer.trace[0].result == {"rejected": False, "rows": [{"name": "Petrolia SA"}]}
     assert client.queries[0][0] == query
+
+
+class Recorder:
+    """Any service: records every method call, returns an empty list."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def __getattr__(self, name):
+        def method(*args, **kwargs):
+            del args, kwargs
+            self.calls.append(name)
+            return []
+
+        return method
+
+
+@pytest.mark.parametrize(
+    "tool, args",
+    [
+        ("most_exposed", {"factor_code": "BRENT", "limit": 1_000_000}),
+        ("most_exposed", {"factor_code": "BRENT", "min_r2": -5}),
+        ("clusters", {"limit": 1_000}),
+        ("hypotheses", {"limit": 0}),
+        ("hypotheses", {"status": "anything"}),
+        ("similar_companies", {"isin": "FRTEST000011", "k": 500}),
+        ("company_exposures", {"isin": "not an isin"}),
+        ("explain_path", {"from_ref": "Factor:BRENT", "to_ref": "Company:FRTEST000011", "max_hops": 50}),
+        ("explain_path", {"from_ref": "Planet:Mars", "to_ref": "Company:FRTEST000011"}),
+        ("simulate_shock", {"factor_code": "BRENT", "pct": 5_000}),
+        ("simulate_shock", {"factor_code": "BRENT", "pct": 20, "depth": 9}),
+        ("resolve_company", {"name": "x" * 500}),
+        ("cypher_fallback", {"cypher": "x" * 5_000}),
+    ],
+)
+def test_out_of_bounds_arguments_never_reach_the_service(tool, args):
+    """Review of #31: the tool arguments have the bounds of the HTTP routes; validation fails first."""
+    recorder = Recorder()
+    services = Services(recorder, recorder, recorder, recorder, recorder, recorder, recorder, recorder)
+    tools = {item.name: item for item in agent_graph.build_tools_for(services)}
+    with pytest.raises(ValueError):  # pydantic's ValidationError is a ValueError
+        tools[tool].invoke(args)
+    assert recorder.calls == []
+
+
+def test_an_out_of_bounds_call_in_the_graph_becomes_an_error_for_the_model():
+    """The model asks for a million rows: the trace says why it failed, the service is never called."""
+    huge = tool_call("most_exposed", {"factor_code": "BRENT", "limit": 1_000_000})
+    agent, _ = make_agent(large_script=[huge, AIMessage(""), WRITTEN])
+    agent.services.factors = Recorder()
+    answer = agent.ask("Which stocks moved most with Brent?")
+    assert "less than or equal to 100" in answer.trace[0].error
+    assert agent.services.factors.calls == []
 
 
 def test_tool_budget_is_enforced():

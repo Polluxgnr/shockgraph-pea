@@ -46,6 +46,14 @@ ADVICE_PATTERNS = [
     r"\bje (dois|devrais)\b.{0,40}\b(acheter|vendre|investir|garder)\b",
     r"\b(acheter|vendre) ou (vendre|garder|acheter|conserver)\b",
     r"\b(conseil|conseilles|conseillez|recommandes|recommandez|recommandation)\b",
+    # Direct orders and "tell me" forms (found in review of #31): "Buy Petrolia today.", "Tell me to sell...".
+    r"(^|[.!?;:]\s*)(please\s+)?(buy|sell|short|dump|get rid of)\b(?![-\s]off)",
+    r"\b(tell|advise|show) me\b.{0,20}\b(to|whether to|if i should) (buy|sell|invest|hold|keep|short|dump)\b",
+    r"\b(what|which)\b.{0,30}\bto (buy|sell|invest in|short|dump)\b",
+    r"\bbest\b.{0,20}\bto (buy|sell|invest in)\b",
+    r"(^|[.!?;:]\s*)(ach[eè]te|achetez|vends|vendez|investis|investissez|liquide|liquidez)\b",
+    r"\b(dis|dites)[- ]moi\b.{0,40}\b(acheter|vendre|investir|garder|liquider)\b",
+    r"\b(quoi|quel|quelle|quels|quelles)\b.{0,30}\b(acheter|vendre)\b",
 ]
 ADVICE = re.compile("|".join(ADVICE_PATTERNS), re.IGNORECASE)
 FRENCH = re.compile(r"\b(le|la|les|des|est|quel|quelle|quelles|quels|si|mon|ma|mes|je|dois|faut|qui|sont)\b", re.I)

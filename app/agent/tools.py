@@ -11,22 +11,40 @@ Cypher is the fallback and is refused unless the validator accepts it.
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any
 
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.agent.guardrails import CypherValidator
 from app.database.neo4j import Neo4jClient
+from app.models.common import EVIDENCE_PATTERN, ISIN_PATTERN
 from app.models.portfolio import PortfolioRequest, Position
 from app.models.shocks import Shock, ShockRequest
 from app.services.companies import CompanyService, FactorService
 from app.services.gds import GdsService
 from app.services.hypotheses import HypothesisService
 from app.services.portfolio import PortfolioService
-from app.services.shocks import ShockService
+from app.services.shocks import MAX_PATH_HOPS, ShockService
 
 RESOLVE_TOOLS = ("resolve_company", "resolve_factor")
+
+# Argument types with the bounds of the HTTP routes: the model can ask for no more than an API user. A value
+# out of bounds fails validation before the service is called, and the error goes back to the model.
+Name = Annotated[str, Field(min_length=2, max_length=80)]
+Isin = Annotated[str, Field(pattern=ISIN_PATTERN)]
+Ref = Annotated[str, Field(pattern=EVIDENCE_PATTERN, max_length=200)]
+FactorCode = Annotated[str, Field(min_length=2, max_length=32)]
+MinR2 = Annotated[float, Field(ge=0, le=1)]
+Limit = Annotated[int, Field(ge=1, le=100)]
+ClusterLimit = Annotated[int, Field(ge=1, le=50)]
+Neighbours = Annotated[int, Field(ge=1, le=20)]
+Hops = Annotated[int, Field(ge=1, le=MAX_PATH_HOPS)]
+ShockPct = Annotated[float, Field(ge=-90, le=300)]
+Depth = Annotated[int, Field(ge=1, le=3)]
+Positions = Annotated[list[Position], Field(min_length=1, max_length=50)]
+Status = Annotated[str, Field(pattern=r"^(hypothesis|confirmed|rejected)$")]
+CypherText = Annotated[str, Field(min_length=1, max_length=4000)]
 
 
 @dataclass
@@ -99,56 +117,58 @@ def ambiguous(name: str, candidates: list[dict], keys: tuple[str, ...]) -> bool:
 def build_tools_for(services: Services) -> list[StructuredTool]:
     """The 12 tools on the given services (see the module docstring)."""
 
-    def resolve_company(name: str) -> dict:
+    def resolve_company(name: Name) -> dict:
         """Find companies by name or ticker (e.g. 'Total', 'TTE.PA'). Always call it before using an ISIN you
         were not given. If the answer says ambiguous, do not guess: the user is asked which one."""
         candidates = jsonable(services.companies.resolve(name, limit=5))
         return {"candidates": candidates, "ambiguous": ambiguous(name, candidates, ("name", "ticker"))}
 
-    def resolve_factor(name: str) -> dict:
+    def resolve_factor(name: Name) -> dict:
         """Find a commodity, currency or rate by name (e.g. 'pétrole', 'oil', 'euro dollar', '10-year')."""
         candidates = jsonable(services.factors.resolve(name, limit=5))
         return {"candidates": candidates, "ambiguous": ambiguous(name, candidates, ("name", "code"))}
 
-    def company_exposures(isin: str, min_r2: float = 0.0) -> list:
+    def company_exposures(isin: Isin, min_r2: MinR2 = 0.0) -> list:
         """Every factor link of one company: betas (estimate) and declared PRODUCES / CONSUMES (fact)."""
         return jsonable(services.companies.exposures(isin, min_r2=min_r2))
 
-    def most_exposed(factor_code: str, min_r2: float = 0.1, limit: int = 10) -> Any:
+    def most_exposed(factor_code: FactorCode, min_r2: MinR2 = 0.1, limit: Limit = 10) -> Any:
         """Companies whose stock historically moved most with a factor (largest |beta| first)."""
         return jsonable(services.factors.exposed(factor_code, min_r2=min_r2, limit=limit))
 
-    def simulate_shock(factor_code: str, pct: float, depth: int = 2, positions: list[Position] | None = None) -> dict:
+    def simulate_shock(
+        factor_code: FactorCode, pct: ShockPct, depth: Depth = 2, positions: Positions | None = None
+    ) -> dict:
         """Estimated impact of a factor move in % (e.g. BRENT +20) on companies, and on a portfolio when
         positions are given. Rates move in percentage points."""
         request = ShockRequest(shocks=[Shock(factor_code=factor_code, pct=pct)], depth=depth, positions=positions)
         return jsonable(services.shocks.simulate(request))
 
-    def portfolio_xray(positions: list[Position]) -> dict:
+    def portfolio_xray(positions: Positions) -> dict:
         """What a portfolio of stocks and ETFs is really exposed to (look-through of the funds)."""
         return jsonable(services.portfolio.xray(PortfolioRequest(positions=positions)))
 
-    def explain_path(from_ref: str, to_ref: str, max_hops: int = 4) -> Any:
+    def explain_path(from_ref: Ref, to_ref: Ref, max_hops: Hops = 4) -> Any:
         """Shortest explainable path between two refs such as 'Factor:BRENT' and 'Company:FR0000120271'."""
         return jsonable(services.shocks.path(from_ref, to_ref, max_hops=max_hops))
 
-    def clusters(limit: int = 5) -> list:
+    def clusters(limit: ClusterLimit = 5) -> list:
         """Groups of stocks that move together (Louvain), with the factors most of their members follow."""
         return jsonable(services.gds.clusters(limit=limit))
 
-    def similar_companies(isin: str, k: int = 5) -> Any:
+    def similar_companies(isin: Isin, k: Neighbours = 5) -> Any:
         """Companies with the most similar position in the correlation network (FastRP embeddings)."""
         return jsonable(services.gds.similar(isin, k=k))
 
-    def predicted_exposures(isin: str) -> Any:
+    def predicted_exposures(isin: Isin) -> Any:
         """Exposures predicted by the ML model where no estimate exists (truth level prediction)."""
         return jsonable(services.gds.predicted_exposures(isin))
 
-    def hypotheses(isin: str | None = None, status: str | None = None, limit: int = 10) -> list:
+    def hypotheses(isin: Isin | None = None, status: Status | None = None, limit: Limit = 10) -> list:
         """Supply-chain relations suggested by news headlines (hypotheses, with confidence and source)."""
         return jsonable(services.hypotheses.list_claims(company_isin=isin, status=status, limit=limit))
 
-    def cypher_fallback(cypher: str) -> dict:
+    def cypher_fallback(cypher: CypherText) -> dict:
         """Last resort when no other tool fits: a read-only Cypher query, checked by the guardrail first.
         Use parameters-free, bounded queries with a LIMIT of at most 100."""
         try:
