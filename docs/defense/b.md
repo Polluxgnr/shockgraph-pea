@@ -81,3 +81,12 @@ Updated at the end of every session. See the end of docs/roles/b.md for the ques
   temporary credentials. Six tests passed through Nginx on port 8080, covering authenticated Neo4j +
   GDS health, Ollama readiness, API health, missing-key 401 and burst-rate 429. This run found and fixed
   two environment propagation defects; it does not retroactively claim that the cloud build succeeded.
+
+## B6 — Performance
+
+- The dedicated loader generated 20,000 companies, 100,000 sensitivities, 200,000 correlations and 50
+  funds on port 7689 only. It batches writes to limit client memory.
+- Ten warm service measurements produced p50/p95 figures recorded in `docs/perf.md`. Company lookup used
+  `NodeUniqueIndexSeek` (3 DB hits); exposed-company ranking returned 20 rows with 40,024 DB hits.
+- A cursor is stable and avoids discarding earlier rows, whereas `SKIP` work grows with page number.
+  Bounded `*..6` protects path queries from combinatorial expansion.
