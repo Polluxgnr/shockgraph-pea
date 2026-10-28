@@ -217,7 +217,7 @@ network", not "same company profile".
 - *What happens when you rerun?* Same graph, same results (`concurrency: 1`, `randomSeed`). New betas from C1:
   the new results replace the old ones in one transaction, at the very end.
 - *What if two API workers refresh at the same time?* Only one holds the lock in Neo4j, the others get
-  `RefreshInProgress`. `test_refreshes_from_four_processes_at_once_never_mix` starts 4 real processes at the same
+  `RefreshInProgress` (the API answers 409 Conflict: retry later). `test_refreshes_from_four_processes_at_once_never_mix` starts 4 real processes at the same
   instant: one succeeds, three are refused, and the graph ends complete. The same test sometimes failed on the old
   code, with every result erased.
 - *Why a lock node and not a Neo4j built-in lock?* Neo4j only locks nodes during a transaction, and a refresh is
