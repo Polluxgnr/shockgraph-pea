@@ -46,3 +46,16 @@ Updated at the end of every session. See the end of docs/roles/b.md for the ques
   remain predictions, claim edges are hypotheses, and structural or declared edges are facts.
 - Validation run on 2026-10-28: the 12 B3 tests passed against the real mini graph, including direct,
   indirect, rejected-claim, portfolio, unknown-factor, disconnected-path and injection-bound scenarios.
+
+## B4 — API hardening
+
+- Pydantic rejects malformed ISINs and evidence refs, too-short or too-long query text, more than 50
+  positions, more than five simultaneous shocks, non-positive amounts, out-of-range shock moves, depths
+  and `r2` values. FastAPI maps these failures to a compact 422 response that names each invalid field.
+- A missing graph resource is a 404, an unfinished service is a 501, and a Neo4j driver outage is a 503.
+  These contracts and descriptions are declared in OpenAPI for every role B service route. Business-body
+  examples show a stock/fund x-ray and a Brent shock in Swagger.
+- 404 is intentionally not used for an unknown portfolio ISIN: B2 reports it in `unknown_isins`, because
+  the rest of the submitted portfolio can still be analysed safely.
+- Validation run on 2026-10-28: all 33 B4 API tests passed, including 501 and 503 on each of the eight
+  service routes, applicable 404 and 422 cases, collection limits and generated OpenAPI examples.
