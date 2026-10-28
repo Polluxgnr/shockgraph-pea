@@ -49,7 +49,8 @@ class Neo4jClient:
         """Run the query with PROFILE and return what a performance report needs.
 
         `operators` (depth first), `db_hits` (sum over the plan), `rows` returned and `time_ms` as reported by
-        the server. Read-only: only use it on read queries, never on user input.
+        the server. The query is routed as a read, so Neo4j refuses any write (`Neo.ClientError.Statement.AccessMode`)
+        and nothing is created; still never call it with user input.
         """
         records, summary, _ = self._driver.execute_query(
             "PROFILE " + query, parameters_=params or {}, database_=self._database, routing_=RoutingControl.READ
