@@ -115,8 +115,13 @@ Partial r2 = t² / (t² + dof): the test `test_partial_r2_matches_the_two_regres
 5. Drops the projection. If anything failed before step 4, the staging values are deleted and the previous
    results are still there, complete.
 
-Two refreshes at the same time (found in Eliott's review): each has its own projection name, so one cannot
-drop the other's, and a lock makes them run one after the other inside the API process.
+Two refreshes at the same time (found in Eliott's reviews): each has its own projection name, so one cannot
+drop the other's. The staging properties are shared, though, so a refresh first takes a **lock stored in
+Neo4j**: a `GdsRefreshLock` node holding its token. Every process sees it (two API workers, `make gds` during
+an HTTP call), and a second refresh gets `RefreshInProgress` instead of mixing its values in. The swap and the
+discard only run in a transaction that still matches the token, so a refresh that lost its lock can neither
+publish nor erase anything. A lock older than 30 minutes was left by a crashed process and is taken over. Inside
+one process, a Python lock makes refreshes wait for each other instead of being refused.
 
 The read endpoints (`/api/network/clusters`, `/api/network/systemic`, `/api/companies/{isin}/similar`) only read
 those properties: they never need GDS, and they keep working when no projection exists.
@@ -188,7 +193,10 @@ network", not "same company profile".
 | Cosine at request time | KNN written as `SIMILAR_TO` | No extra relationships to keep fresh; ~1,500 vectors per call is cheap |
 | Drop the projection | Keep it in memory | RAM; and a stale projection would give results that no longer match the graph |
 | `mutate`, stage, then swap in one transaction | `write` mode, one property after the other | With `write`, a crash after Louvain left companies with a new community and no embedding, and the old results were already gone (Eliott's review). The swap is all or nothing |
-| A projection name per run + a lock | One fixed name `market` | Two refreshes at once could drop each other's projection |
+| A projection name per run | One fixed name `market` | Two refreshes at once could drop each other's projection |
+| A lock node in Neo4j, swap and discard tied to its token | A Python `threading.Lock` only | The Python lock only covers one process. With 4 processes refreshing at once, the old code sometimes ended with 0 communities, 0 PageRanks and 0 embeddings: one process swapped after another had already published and cleared the staging |
+| Refuse the second refresh | Make it wait for the lock | Waiting across processes needs polling and a timeout; refusing is immediate and the caller can retry. Inside one process the Python lock still makes them wait |
+| Per-run staging property names (`community_id_<id>`) | One lock | Neo4j cannot take a property name as a parameter, so the name would have to be written into the Cypher string, which the project rules forbid |
 
 ### Cost
 
@@ -208,6 +216,14 @@ network", not "same company profile".
   comparing both is part of C3.
 - *What happens when you rerun?* Same graph, same results (`concurrency: 1`, `randomSeed`). New betas from C1:
   the new results replace the old ones in one transaction, at the very end.
+- *What if two API workers refresh at the same time?* Only one holds the lock in Neo4j, the others get
+  `RefreshInProgress`. `test_refreshes_from_four_processes_at_once_never_mix` starts 4 real processes at the same
+  instant: one succeeds, three are refused, and the graph ends complete. The same test sometimes failed on the old
+  code, with every result erased.
+- *Why a lock node and not a Neo4j built-in lock?* Neo4j only locks nodes during a transaction, and a refresh is
+  several transactions (projection, algorithms, swap). The node keeps the lock across them; the uniqueness
+  constraint makes sure two processes cannot create two lock nodes, and writing to the node before reading it
+  makes a takeover safe.
 - *And if the database crashes in the middle?* Before the swap, nothing visible has changed: the test
   `test_a_failure_after_louvain_keeps_the_previous_results` makes PageRank fail after Louvain and checks that
   the previous communities and embeddings are untouched, with no staging value and no projection left.
