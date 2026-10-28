@@ -28,6 +28,17 @@ from app.models.agent import AgentAnswer, AgentClaim
 # Strongest first: a claim may be stated as weakly as its sources, never more strongly.
 TRUTH_STRENGTH = {"fact": 3, "estimate": 2, "prediction": 1, "hypothesis": 0}
 
+# Results without a `truth` field (portfolio lines, news claims...): the field says where the number comes from.
+IMPLIED_TRUTH = {
+    "beta": "estimate",
+    "weighted_beta": "estimate",
+    "impact_pct": "estimate",
+    "rho": "estimate",
+    "prob": "prediction",
+    "claim_id": "hypothesis",
+    "confidence": "hypothesis",
+}
+
 # One query per label, written out: the label of a ref never goes into a Cypher string.
 EXISTING = {
     "Company": "MATCH (n:Company) WHERE n.isin IN $keys RETURN n.isin AS key LIMIT $limit",
@@ -166,9 +177,10 @@ def _own_numbers(item: dict) -> list[float]:
 
 
 def _levels(item: dict) -> list[str]:
-    """Truth levels an object states: `truth`, or `truth_levels` on a path."""
+    """Truth levels an object states: `truth`, or `truth_levels` on a path; else what its fields imply."""
     found = [item["truth"]] if item.get("truth") in TRUTH_STRENGTH else []
-    return found + [level for level in item.get("truth_levels") or [] if level in TRUTH_STRENGTH]
+    found += [level for level in item.get("truth_levels") or [] if level in TRUTH_STRENGTH]
+    return found or sorted({level for key, level in IMPLIED_TRUTH.items() if item.get(key) is not None})
 
 
 def _full_result(call) -> Any:

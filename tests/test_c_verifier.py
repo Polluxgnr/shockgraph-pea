@@ -196,6 +196,19 @@ def test_a_model_output_is_a_prediction():
     assert result.claims[0].truth == "prediction"
 
 
+def test_a_result_without_truth_field_gets_the_level_its_fields_imply():
+    """X-ray factor lines carry a weighted beta but no `truth`: still an estimate, never a fact."""
+    xray = ToolCall(
+        tool="portfolio_xray",
+        args={"positions": [{"isin": PETROLIA, "amount_eur": 650}]},
+        result={"total_eur": 650, "factors": [{"factor_code": "BRENT", "weighted_beta": 0.62, "covered_weight": 1}]},
+    )
+    result = verify(claim("The portfolio's weighted beta to Brent is 0.62.", "fact", "Factor:BRENT"), trace=[xray])
+    assert result.claims[0].truth == "estimate"
+    amount = verify(claim("The portfolio holds 650 EUR of Petrolia.", "fact", f"Company:{PETROLIA}"), trace=[xray])
+    assert amount.claims[0].truth == "fact"  # 650 comes from the arguments and the total, which are facts
+
+
 def test_a_shock_line_gives_its_truth_level_through_the_company():
     """The shock line names Petrolia, not Brent: the number and the company are enough to find it."""
     result = verify(claim("Petrolia gains 12.4 %.", "fact", f"Company:{PETROLIA}", "Factor:BRENT"))
