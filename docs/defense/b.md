@@ -90,3 +90,23 @@ Updated at the end of every session. See the end of docs/roles/b.md for the ques
   `NodeUniqueIndexSeek` (3 DB hits); exposed-company ranking returned 20 rows with 40,024 DB hits.
 - A cursor is stable and avoids discarding earlier rows, whereas `SKIP` work grows with page number.
   Bounded `*..6` protects path queries from combinatorial expansion.
+
+## B7 — Agent evaluation and oral guide
+
+- The suite fixes 30 questions before model execution: 20 fixture-grounded analyses and ten traps. A case
+  passes only when the answer contains an accepted expectation and its refusal flag matches the contract.
+- Accuracy, correct refusals, removed claims, tool errors and mean latency come from the returned
+  `AgentAnswer`; the JSON preserves per-case evidence. The fake provider tests this scoring pipeline only.
+  Its 30/30 result is deliberately labelled `scripted-harness-only`, never real-model accuracy.
+- The real provider instantiates the frozen role C `ShockAgent` without implementing it in role B. On
+  2026-10-28, `ShockAgent.ask` still raised `NotImplementedError`, so no real-model result was invented.
+- Oral summary: B1 makes searches stable and traceable; B2 expands funds into economic constituents; B3
+  combines statistical shocks with clearly labelled hypotheses; B4 makes HTTP failure contracts explicit;
+  B5 provides a least-privilege proxied stack; B6 measures its cost on a dedicated large graph; B7 measures
+  whether the natural-language layer preserves those contracts and refuses unsafe requests.
+- Likely oral question — why not implement the missing agent? Ownership assigns LangGraph to role C and
+  freezes its signature. B must test through a fake until C4/C5 lands, otherwise one PR would silently alter
+  another contributor's responsibility.
+- Likely oral question — what remains before release? Run the real provider once C4/C5 and the local model
+  are available, record model identity and measured metrics, obtain Pollux's review, and merge only with
+  green CI plus the required approval.

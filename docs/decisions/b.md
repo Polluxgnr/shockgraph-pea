@@ -16,3 +16,5 @@ One line per decision not settled by AGENTS.md: date, decision, why.
   `NEO4J_*` environment variable as a database configuration key under strict validation.
 - 2026-10-28: benchmark loaders hard-fail outside port 7689; this prevents destructive synthetic loading
   into the test or development graph.
+- 2026-10-28: agent evaluation reports scripted and real providers separately; a deterministic harness
+  may validate scoring but must never be presented as model accuracy.
