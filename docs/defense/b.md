@@ -81,3 +81,29 @@ Updated at the end of every session. See the end of docs/roles/b.md for the ques
   temporary credentials. Six tests passed through Nginx on port 8080, covering authenticated Neo4j +
   GDS health, Ollama readiness, API health, missing-key 401 and burst-rate 429. This run found and fixed
   two environment propagation defects; it does not retroactively claim that the cloud build succeeded.
+- GPU validation on Eliott's Windows 11 machine on 2026-10-28: Docker Desktop 4.96.1 used its WSL2
+  backend and exposed an RTX 4070 Laptop GPU (8,188 MiB VRAM, NVIDIA driver 610.62) to a Linux
+  container. Ollama 0.40.12 loaded `qwen2.5:7b` with all 29 layers on CUDA (4,168 MiB model buffer and
+  a 224 MiB KV cache); `ollama ps` reported `100% GPU`. The first request took 62.146 s because it
+  included a 30.953 s model load and cold prompt processing. A second real request took 1.575 s and
+  generated at 42.94 tokens/s. These are measured local figures, not benchmark estimates.
+- The default Compose file must remain the CPU-compatible path. GPU access belongs in a separate
+  `docker-compose.gpu.yml` override, invoked explicitly with both `-f` arguments, so CI and machines
+  without NVIDIA support do not fail. Issue #43 asks role A to grant role B ownership of that new path;
+  no ownership rule is bypassed while it is pending.
+
+## Video preparation and database handoff
+
+- Before recording, close unrelated windows, enable Do Not Disturb, start Docker Desktop and verify
+  `docker info`, `nvidia-smi`, `docker compose ps`, `ollama ps` and the Neo4j Browser connection. Keep
+  the API key out of the terminal history and screen recording; pass it from the shell environment.
+- Record one continuous technical path: architecture diagram; container health; Neo4j schema and one
+  bounded query plan; Swagger calls for search, x-ray and shock; one real agent answer with its trace;
+  one advice refusal; then the benchmark and evaluation tables. Show truth labels and evidence refs,
+  and explicitly distinguish measured estimates from declared facts and hypotheses.
+- A Neo4j 5.26 dump can only be loaded while the target database is stopped. First create a recoverable
+  backup of the current `neo4j` database, then stop Neo4j, load the supplied dump into the named data
+  volume with `neo4j-admin database load --from-path=<mounted-directory> neo4j --overwrite-destination`,
+  and restart the service. Confirm the node/relationship counts and constraints before the demo. Never
+  import an unverified archive directly over the only copy of the local database. No `.dump` archive was
+  present in the repository on 2026-10-28, so no import was attempted.
