@@ -66,6 +66,13 @@ REFUSED = [
     ("MATCH (a:Company {isin: $isin})-[:CORRELATED_WITH]-+(b:Company) RETURN b.name LIMIT 5", "unbounded quantified"),
     ("MATCH (a:Company)-->*(b:Company) RETURN b LIMIT 5", "unbounded quantified"),
     ("MATCH (c:Company) RETURN c.name LIMIT 10 + 100000", "single integer literal"),
+    # patterns hidden in map values (second review of #23)
+    (
+        "MATCH (c:Company) RETURN c {.name, peers: [(c)-[:CORRELATED_WITH*]-(o:Company) | o.name]} AS row LIMIT 5",
+        "unbounded variable-length path",
+    ),
+    ("RETURN {peers: [(c:Company)-[:CORRELATED_WITH*]-(o:Company) | o.name]} AS row LIMIT 5", "unbounded"),
+    ("RETURN {who: [(u:User) | u.name]} AS row LIMIT 5", "unknown label User"),
 ]
 
 
@@ -121,3 +128,12 @@ def test_accepted_queries_compile_on_neo4j(neo4j_client, cypher):
     """EXPLAIN plans the query without running it: accepted queries are real, valid Cypher."""
     params = {"code": "BRENT", "a": "FRTEST000011", "b": "DETEST000078", "isins": [], "isin": "FRTEST000011"}
     neo4j_client.read("EXPLAIN " + cypher.rstrip(";"), params)
+
+
+def test_count_subquery_in_a_projection_gives_only_the_real_reason(validator):
+    """Second review of #23: `reach: COUNT {...}` must not be read as the label COUNT."""
+    result = validator.validate(
+        "MATCH (c:Company) RETURN c {.name, reach: COUNT { (c)-[:CORRELATED_WITH*]-(:Company) }} AS row LIMIT 5"
+    )
+    assert not result.valid
+    assert result.reasons == ["unbounded variable-length path"], result.reasons
