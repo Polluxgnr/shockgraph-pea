@@ -3,11 +3,13 @@
 Question: from a stock's position in the graph (declared PRODUCES / CONSUMES, industry, correlation
 neighbours, Louvain community, FastRP embedding), can we tell whether it is significantly exposed to a factor?
 
-Temporal split: C1's history (`returns_window_years`, 3 years) cut in two consecutive halves of about 78 weeks,
-above C1's 52-week minimum. The model is fitted on the older half, features and labels both from it, and
-evaluated on the recent half, which it never saw: no price of the test period reaches training. It is compared
-with a naive baseline (industry share). Two full 3-year windows would need a 6-year download, which Yahoo
-rate-limits (two attempts got 894, then 1,124 of 2,380 symbols, without the market proxies).
+Temporal split: two consecutive windows of `returns_window_years` (3 years each, as C1). The model is fitted on
+the older window, features and labels both from it, and evaluated on the recent window, which it never saw: no
+price of the test period reaches training. It is compared with a naive baseline (industry share).
+
+The 6 years of prices have their own cache (`data/cache/ml`). Yahoo refuses large bursts, so the download goes
+in rounds: market proxies and factors first, then the stocks, again after a wait while a round still brings new
+symbols. A run that cannot get the market proxies stops with an error instead of training on nothing.
 
 The chosen model, fitted on the older window, then scores the recent window's pairs that have **no**
 SENSITIVE_TO estimate (no significant beta, or no usable prices). Pairs with prob >= 0.5 get
@@ -16,6 +18,7 @@ go to `ml/artifacts/` (git-ignored); the numbers of the report come from `metric
 """
 
 import json
+import time
 from collections.abc import Callable
 from datetime import date, timedelta
 from pathlib import Path
@@ -31,6 +34,8 @@ from ml.network import network_positions
 from scripts.ingest import prices
 
 PROB_MIN = 0.5
+DOWNLOAD_ROUNDS = 8
+ROUND_WAIT = 120  # seconds between download rounds, for Yahoo's rate limit to clear
 MAX_ROWS = 100_000
 WRITE_BATCH = 1_000
 ARTIFACTS = Path(__file__).parent / "artifacts"
@@ -90,14 +95,40 @@ def split_windows(end: date, days: int) -> tuple[Window, Window]:
 
 
 def window_days(settings: Settings) -> int:
-    """Each window is half of C1's history."""
-    return 365 * settings.returns_window_years // 2
+    """Each window is as long as C1's history."""
+    return 365 * settings.returns_window_years
 
 
-def load_moves(context: Context, settings: Settings) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """C1's weekly moves, from C1's cache (the same start date, so nothing is downloaded twice)."""
-    start = date.today() - timedelta(days=365 * settings.returns_window_years + 7)
-    return prices.weekly_moves(context.listings, context.factors, settings, start)
+def with_data(frame: pd.DataFrame) -> set[str]:
+    """Columns that hold at least one value."""
+    return set(frame.columns[frame.notna().any()])
+
+
+def load_moves(
+    context: Context, settings: Settings, wait: Callable[[float], None] = time.sleep
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Weekly moves over both windows (6 years), downloaded in rounds until a round brings nothing new."""
+    start = date.today() - timedelta(days=2 * window_days(settings) + 7)
+    cache_dir = Path(settings.data_dir) / "cache" / "ml"
+    known: set[str] | None = None
+    stock_moves = factor_moves = pd.DataFrame()
+    for attempt in range(DOWNLOAD_ROUNDS):
+        if attempt:
+            wait(ROUND_WAIT)
+        # Market proxies and factors alone first: one small request, and without them nothing can be fitted.
+        prices.weekly_moves([], context.factors, settings, start, cache_dir=cache_dir)
+        stock_moves, factor_moves = prices.weekly_moves(
+            context.listings, context.factors, settings, start, cache_dir=cache_dir
+        )
+        found = with_data(stock_moves) | with_data(factor_moves)
+        print(f"download round {attempt + 1}: {len(found)} series with data", flush=True)
+        if found == known:
+            break
+        known = found
+    missing = {prices.MARKET_EUROPE, prices.MARKET_WORLD} - with_data(stock_moves)
+    if missing:
+        raise RuntimeError(f"no prices for the market proxies {sorted(missing)}: Yahoo still refuses, retry later")
+    return stock_moves, factor_moves
 
 
 def write_predictions(client: Neo4jClient, isins: list[str], rows: list[dict]) -> int:

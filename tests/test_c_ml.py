@@ -41,7 +41,7 @@ PER_INDUSTRY = 10
 LONERS = (0, 9)  # one exposed, one not: no industry co-movement, so no correlation neighbours
 FACTORS = [FactorSource("OIL", "yahoo", "OIL=F", "pct"), FactorSource("FX", "yahoo", "FX=X", "pct")]
 UNPRICED = {"ZZ00UNPRICED1": "ENERGY", "ZZ00UNPRICED2": "AIRLINES", "ZZ00UNPRICED3": "BANKS"}
-SETTINGS = Settings(returns_window_years=4)  # 4 synthetic years: two windows of 2 years (~104 weeks)
+SETTINGS = Settings(returns_window_years=2)  # 4 synthetic years: two windows of 2 years (~104 weeks)
 
 
 def isin_of(industry: str, number: int) -> str:
@@ -108,15 +108,52 @@ def universe():
 # --- windows and labels -----------------------------------------------------------------------------
 
 
-def test_windows_are_consecutive_halves_of_c1_history():
-    """3 years of C1 history give two windows of 547 days (~78 weeks, above C1's 52-week minimum); the older
-    one ends the day before the recent one starts."""
+def test_windows_are_two_full_c1_windows():
+    """Two windows of 3 years each, like C1's; the older one ends the day before the recent one starts."""
     days = train.window_days(Settings(returns_window_years=3))
     older, recent = train.split_windows(date(2026, 10, 23), days)
-    assert days == 547
+    assert days == 3 * 365
     assert older.end < recent.start
     assert (recent.start - older.end).days == 1
     assert (recent.end - recent.start).days == (older.end - older.start).days == days - 1
+
+
+def fake_weekly_moves(rounds: list[set[str]]):
+    """weekly_moves stand-in: each full call (with listings) returns the next round's symbols with data."""
+    calls: list[int] = []
+
+    def weekly_moves(listings, factors, settings, start, cache_dir=None):
+        del factors, settings
+        calls.append(len(listings))
+        assert cache_dir.parts[-2:] == ("cache", "ml") and start < date.today()
+        found = rounds[min(sum(1 for count in calls if count), len(rounds)) - 1]
+        columns = ["EXSA.DE", "URTH", "AAA", "BBB"]
+        return pd.DataFrame({name: [1.0 if name in found else None] for name in columns}), pd.DataFrame({"OIL": [1.0]})
+
+    return weekly_moves, calls
+
+
+def test_download_goes_in_rounds_until_nothing_new(monkeypatch, tmp_path):
+    """Round 1 gets AAA only, round 2 the markets too, round 3 nothing new: stop, with a wait between rounds.
+    Markets and factors are asked alone (no listings) before each round."""
+    context, *_ = synthetic_universe(weeks=60)
+    full = {"EXSA.DE", "URTH", "AAA"}
+    weekly_moves, calls = fake_weekly_moves([{"AAA"}, full, full])
+    monkeypatch.setattr(train.prices, "weekly_moves", weekly_moves)
+    waits: list[float] = []
+    stocks, _ = train.load_moves(context, Settings(data_dir=str(tmp_path)), wait=waits.append)
+    assert train.with_data(stocks) == full
+    assert waits == [train.ROUND_WAIT] * 2
+    assert calls[0] == 0 and calls[1] == len(context.listings)
+
+
+def test_download_without_market_proxies_stops_with_an_error(monkeypatch, tmp_path):
+    """Yahoo never gives the markets: a clear error instead of training on nothing."""
+    context, *_ = synthetic_universe(weeks=60)
+    weekly_moves, _ = fake_weekly_moves([{"AAA"}])
+    monkeypatch.setattr(train.prices, "weekly_moves", weekly_moves)
+    with pytest.raises(RuntimeError, match="market proxies"):
+        train.load_moves(context, Settings(data_dir=str(tmp_path)), wait=lambda seconds: None)
 
 
 def test_window_cut_keeps_only_its_weeks(universe):

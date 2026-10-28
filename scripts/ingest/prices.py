@@ -421,10 +421,18 @@ def write_correlations(client: Neo4jClient, isins: list[str], pairs: list[dict],
 
 
 def weekly_moves(
-    listings: list[Listing], factors: list[FactorSource], settings: Settings, start: date
+    listings: list[Listing],
+    factors: list[FactorSource],
+    settings: Settings,
+    start: date,
+    cache_dir: Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Weekly moves of stocks and market proxies (by ticker) and of factors (by code), from `start`."""
-    cache_dir = Path(settings.data_dir) / "cache"
+    """Weekly moves of stocks and market proxies (by ticker) and of factors (by code), from `start`.
+
+    The cache keeps the history it was first filled with, so a caller that needs a longer history (the ML
+    model's two windows) passes its own `cache_dir`.
+    """
+    cache_dir = cache_dir or Path(settings.data_dir) / "cache"
     yahoo_factors = {factor.source_id: factor.code for factor in factors if factor.source == "yahoo"}
     symbols = sorted({listing.ticker for listing in listings} | {MARKET_EUROPE, MARKET_WORLD} | set(yahoo_factors))
     yahoo = weekly_returns(
