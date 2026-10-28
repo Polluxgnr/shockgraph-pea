@@ -336,6 +336,19 @@ def test_network_endpoints(refreshed, api_with, auth_headers):
     assert response.status_code == 200 and response.json()["graphs"][0].startswith(GRAPH_NAME + "_")
 
 
+@pytest.mark.neo4j
+@pytest.mark.gds
+def test_refresh_endpoint_answers_409_while_another_process_refreshes(refreshed, api_with, auth_headers):
+    """A refused refresh is a conflict the caller can retry, not a server error."""
+    client, _ = refreshed
+    client.write(HOLD_LOCK, {"token": OTHER_PROCESS, "age": 0})
+    try:
+        response = api_with(client).post("/api/network/refresh", headers=auth_headers)
+        assert response.status_code == 409 and "another GDS refresh" in response.text
+    finally:
+        client.write(DROP_LOCKS)
+
+
 # --- without a database --------------------------------------------------------------------------
 
 
