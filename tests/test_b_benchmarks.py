@@ -1,7 +1,7 @@
 """Fast tests for benchmark dataset and latency helpers."""
 
 from scripts.bench_data import COMPANIES, CORRELATIONS, FUNDS, SENSITIVITIES, _batches
-from scripts.benchmark import measure
+from scripts.benchmark import _compact_profile, measure
 
 
 def test_benchmark_contract_sizes_and_batches() -> None:
@@ -15,12 +15,30 @@ def test_benchmark_contract_sizes_and_batches() -> None:
 
 
 def test_measure_reports_ordered_real_samples() -> None:
-    """Latency helper warms once and emits coherent p50/p95 values."""
+    """Latency helper warms three times and emits coherent p50/p95 values."""
     calls = []
 
     def probe() -> None:
         calls.append(1)
 
     result = measure(probe, 5)
-    assert len(calls) == 6
+    assert len(calls) == 8
     assert 0 <= result["min_ms"] <= result["p50_ms"] <= result["p95_ms"] <= result["max_ms"]
+
+
+def test_compact_profile_selects_informative_operator() -> None:
+    """Report summaries retain measurements and surface an index or scan operator."""
+    profile = {
+        "operators": ["ProduceResults", "Projection", "NodeIndexSeek"],
+        "db_hits": 42,
+        "rows": 20,
+        "time_ms": 7,
+    }
+
+    assert _compact_profile(profile) == {
+        "operator": "NodeIndexSeek",
+        "operators": profile["operators"],
+        "db_hits": 42,
+        "rows": 20,
+        "time_ms": 7,
+    }
