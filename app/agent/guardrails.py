@@ -65,8 +65,8 @@ START_CLAUSES = ("MATCH", "OPTIONAL MATCH", "WITH", "UNWIND", "CALL", "RETURN")
 _STRING = re.compile(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"", re.S)
 _COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
 _BACKTICK = re.compile(r"`([^`]*)`")
-_MAP_LITERAL = re.compile(r"\{\s*[A-Za-z_]\w*\s*:[^{}]*\}")
-_REL_PATTERN = re.compile(r"\[([^\[\]]*)\]")
+# A relationship pattern is a bracket right after `-` (`-[r:X*..3]->`); other brackets are lists or comprehensions.
+_REL_PATTERN = re.compile(r"-\s*\[([^\[\]]*)\]")
 _LABEL_USE = re.compile(r"(?:\b[A-Za-z_]\w*|\()\s*:\s*(!?[A-Za-z_]\w*(?:\s*[:&|]\s*!?[A-Za-z_]\w*)*)")
 # A quantifier after a node group `)` or, since Neo4j 5.9, right after a relationship (`]-`, `]->`, `-->`).
 _QUANTIFIER = re.compile(r"(?:\)|-|>)\s*(\+|\*|\{\s*(\d*)\s*,\s*(\d*)\s*\}|\{\s*(\d+)\s*\})")
@@ -76,9 +76,10 @@ _LIMIT = re.compile(r"\bLIMIT\b", re.I)
 _STRICT_LIMIT = re.compile(
     r"\bLIMIT\s+(\d+)\s*(?=$|\}|;|\b(?:UNION|MATCH|OPTIONAL|WITH|UNWIND|CALL|RETURN|ORDER|SKIP)\b)", re.I
 )
-# A map right after a variable: projection `c {.name, beta: r.beta}` or properties `(c:Company {isin: $isin})`.
-_MAP_AFTER_NAME = re.compile(r"\b(\w+)\s*\{[^{}]*\}")
-SUBQUERY_KEYWORDS = {"CALL", "EXISTS", "COUNT", "COLLECT"}
+# A map key right after `{` or `,`: `isin:` in `{isin: $isin}`, `.name` and `beta:` in `c {.name, beta: r.beta}`.
+# Only the keys are removed: the values stay, so a pattern hidden in a value (`{p: [(a)-[*]-(b) | b]}`) is still
+# checked, and a key is never read as a label (`beta: r` is not the label `r`).
+_MAP_KEY = re.compile(r"([{,]\s*)(?:\.\*|\.[A-Za-z_]\w*|[A-Za-z_]\w*\s*:(?!:))")
 
 
 @dataclass
@@ -147,13 +148,10 @@ class CypherValidator:
     def _schema_and_paths(text: str) -> list[str]:
         """Labels and relationship types must exist; variable-length paths must be bounded."""
         reasons: list[str] = []
-        scrubbed = text
-        while _MAP_LITERAL.search(scrubbed):
-            scrubbed = _MAP_LITERAL.sub("{}", scrubbed)
-        scrubbed = _MAP_AFTER_NAME.sub(_blank_projection, scrubbed)
+        scrubbed = _MAP_KEY.sub(r"\1", text)
         for body in _REL_PATTERN.findall(scrubbed):
             reasons += _check_relationship(body)
-        without_rels = _REL_PATTERN.sub("[]", scrubbed)
+        without_rels = _REL_PATTERN.sub("-[]", scrubbed)
         for expression in _LABEL_USE.findall(without_rels):
             for label in re.split(r"[:&|!\s]+", expression):
                 if label and label not in ALLOWED_LABELS | SUB_LABELS:
@@ -180,11 +178,6 @@ class CypherValidator:
             elif strict[match.start()] > MAX_LIMIT:
                 reasons.append(f"LIMIT {strict[match.start()]} is above {MAX_LIMIT}")
         return reasons
-
-
-def _blank_projection(match: re.Match) -> str:
-    """Keep the variable, drop the map after it; keep subquery braces (CALL {...}, EXISTS {...})."""
-    return match.group(0) if match.group(1).upper() in SUBQUERY_KEYWORDS else match.group(1)
 
 
 def _has_word(upper: str, phrase: str) -> bool:
