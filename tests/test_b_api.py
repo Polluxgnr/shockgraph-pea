@@ -103,6 +103,14 @@ def test_validation_responses_name_invalid_fields(api_fake, method, url, payload
     assert all(error["field"] and error["message"] for error in body["errors"])
 
 
+def test_invalid_pagination_cursor_is_clear_422(api_fake):
+    """Malformed opaque cursors are client errors rather than uncaught server errors."""
+    response = api_fake.get("/api/companies?cursor=not-a-cursor")
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "Invalid pagination cursor"}
+
+
 @pytest.mark.parametrize(
     ("method", "url", "payload"),
     [
@@ -142,8 +150,10 @@ def test_openapi_documents_examples_and_common_failures(api_fake):
 
     xray_body = paths["/api/portfolio/xray"]["post"]["requestBody"]["content"]["application/json"]
     shock_body = paths["/api/shocks/simulate"]["post"]["requestBody"]["content"]["application/json"]
+    error_schema = schema["components"]["schemas"]["ErrorResponse"]
     assert "stock-and-fund" in xray_body["examples"]
     assert "brent-portfolio" in shock_body["examples"]
+    assert "errors" in error_schema["properties"]
 
     operations = [
         paths["/api/companies"]["get"],
