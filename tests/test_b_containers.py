@@ -24,6 +24,9 @@ def test_compose_keeps_api_private_and_waits_for_dependencies():
     assert services["api"]["depends_on"]["neo4j"]["condition"] == "service_healthy"
     assert services["api"]["depends_on"]["ollama"]["condition"] == "service_healthy"
     assert "gds.version()" in services["neo4j"]["healthcheck"]["test"][-1]
+    assert "HEALTHCHECK_PASSWORD" in services["neo4j"]["environment"]
+    assert "NEO4J_PASSWORD" in services["api"]["environment"]
+    assert "API_KEY" in services["api"]["environment"]
 
 
 def test_nginx_enforces_body_auth_route_and_rate_limits():

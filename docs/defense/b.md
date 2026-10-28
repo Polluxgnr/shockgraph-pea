@@ -77,3 +77,7 @@ Updated at the end of every session. See the end of docs/roles/b.md for the ques
   could not resolve either external DNS or the cloud proxy during `pip install`, including after an
   escalated retry; consequently the three live proxy tests were skipped, not reported as passed. GDS
   installation also awaits publication of the `graphdatascience.ninja` allowlist change.
+- Local follow-up validation on 2026-10-28: the complete Linux-container stack built and started with
+  temporary credentials. Six tests passed through Nginx on port 8080, covering authenticated Neo4j +
+  GDS health, Ollama readiness, API health, missing-key 401 and burst-rate 429. This run found and fixed
+  two environment propagation defects; it does not retroactively claim that the cloud build succeeded.
