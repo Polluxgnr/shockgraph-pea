@@ -21,6 +21,9 @@ class AgentClaim(BaseModel):
     text: str
     truth: TruthLevel
     evidence: list[str] = Field(default_factory=list, description="Refs like Company:FR0000120271")
+    reason: str | None = Field(
+        default=None, description="Set by the verifier: why the claim was removed or its truth level lowered"
+    )
 
 
 class ToolCall(BaseModel):
@@ -31,6 +34,9 @@ class ToolCall(BaseModel):
     result_preview: str = ""
     duration_ms: int = 0
     error: str | None = None
+    result: Any = Field(
+        default=None, description="Full tool result: the verifier checks the answer's numbers against it"
+    )
 
 
 class AgentAnswer(BaseModel):
