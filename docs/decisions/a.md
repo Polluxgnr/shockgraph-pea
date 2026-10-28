@@ -34,7 +34,7 @@ One line per decision not settled by AGENTS.md: date, decision, why.
   Removes US companies incorporated in Ireland (Medtronic, Accenture...) that brokers refuse in a PEA. Known limits:
   dual listings, UK companies are excluded since Brexit (correct), Swiss companies are excluded (correct).
 - 2026-10-25 · Funds: 14 ETFs in `data/seed/funds.csv`, every ISIN checked with OpenFIGI. TERs and replication
-  come from issuer pages; the rows marked "to check" in the `checked` column must be verified before the video.
+  come from issuer pages; the 3 rows first marked "to check" were verified on 27 Oct (see the last entry).
 - 2026-10-25 · `HOLDS` is not loaded for real funds: issuers publish the substitute baskets of synthetic PEA ETFs
   only through JavaScript pages. The look-through uses `TRACKS`, which is the economic exposure anyway; the
   fixture shows the HOLDS vs TRACKS difference.
@@ -136,3 +136,6 @@ all true on reading**, 1 confirmed (SLB → TotalEnergies, 0.95). Precision firs
   relationship type scan of every claim). Now the start of the query is chosen in Python from constant fragments:
   company → `NodeUniqueIndexSeek` on `Company.isin`, status → `NodeIndexSeek` on `Claim.status`; a test checks
   the operators in the EXPLAIN plan.
+- 2026-10-27 · The 3 ETFs marked "to check" were verified on the issuers' documents: PCEU 0.15 % synthetic (Amundi
+  factsheet 30/09/2026, unchanged); ETZ **0.19 % synthetic** (BNP Paribas AM KID 16/04/2026; it was wrongly 0.20 %
+  physical); VWCE **0.14 %** physical by sampling (Vanguard factsheet 30/09/2026; it was 0.19 %).
