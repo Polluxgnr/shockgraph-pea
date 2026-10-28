@@ -105,12 +105,18 @@ Partial r2 = t² / (t² + dof): the test `test_partial_r2_matches_the_two_regres
 
 `POST /api/network/refresh` (API key) or `make gds`:
 
-1. Removes the results of the previous run (`community_id`, `pagerank`, `embedding`).
-2. Builds an **in-memory projection** `market`: every pair of stocks linked by `CORRELATED_WITH`, undirected,
-   weighted by `rho`.
-3. Runs **Louvain** → `community_id`, **PageRank** → `pagerank`, **FastRP** → `embedding` (64 numbers), and writes
-   them on the Company nodes.
-4. Drops the projection (also when an algorithm fails: `finally`).
+1. Builds an **in-memory projection** `market_<id>` (a new name for each run): every pair of stocks linked by
+   `CORRELATED_WITH`, undirected, weighted by `rho`.
+2. Runs **Louvain** → `community_id`, **PageRank** → `pagerank`, **FastRP** → `embedding` (64 numbers) in
+   `mutate` mode: the results stay in GDS memory.
+3. Writes the three results to the Company nodes under staging names (`community_id_next`...).
+4. Swaps them in with **one Cypher transaction**: every company takes its new values, or loses its old ones
+   if it has no correlation any more.
+5. Drops the projection. If anything failed before step 4, the staging values are deleted and the previous
+   results are still there, complete.
+
+Two refreshes at the same time (found in Eliott's review): each has its own projection name, so one cannot
+drop the other's, and a lock makes them run one after the other inside the API process.
 
 The read endpoints (`/api/network/clusters`, `/api/network/systemic`, `/api/companies/{isin}/similar`) only read
 those properties: they never need GDS, and they keep working when no projection exists.
@@ -181,6 +187,8 @@ network", not "same company profile".
 | FastRP | Node2Vec | Node2Vec trains a neural model (slow, random walks); FastRP is a few matrix products |
 | Cosine at request time | KNN written as `SIMILAR_TO` | No extra relationships to keep fresh; ~1,500 vectors per call is cheap |
 | Drop the projection | Keep it in memory | RAM; and a stale projection would give results that no longer match the graph |
+| `mutate`, stage, then swap in one transaction | `write` mode, one property after the other | With `write`, a crash after Louvain left companies with a new community and no embedding, and the old results were already gone (Eliott's review). The swap is all or nothing |
+| A projection name per run + a lock | One fixed name `market` | Two refreshes at once could drop each other's projection |
 
 ### Cost
 
@@ -199,4 +207,7 @@ network", not "same company profile".
   removed. It often matches an industry, sometimes not (two industries exposed to the same commodity), and
   comparing both is part of C3.
 - *What happens when you rerun?* Same graph, same results (`concurrency: 1`, `randomSeed`). New betas from C1:
-  the old results are removed first, then recomputed.
+  the new results replace the old ones in one transaction, at the very end.
+- *And if the database crashes in the middle?* Before the swap, nothing visible has changed: the test
+  `test_a_failure_after_louvain_keeps_the_previous_results` makes PageRank fail after Louvain and checks that
+  the previous communities and embeddings are untouched, with no staging value and no projection left.
