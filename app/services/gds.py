@@ -1,19 +1,23 @@
 """Graph Data Science service (role C). Signatures are frozen: add methods, do not change these.
 
-One in-memory projection, `market`: the companies that have at least one CORRELATED_WITH, with those links
-undirected and weighted by `rho`. Louvain, PageRank and FastRP run on it, write `community_id`, `pagerank`
-and `embedding` back onto the Company nodes, and the projection is dropped. Reads never touch GDS: they
-query the written properties, so the API keeps working while no projection exists.
+Each refresh projects its own in-memory graph, `market_<id>`: the companies that have at least one
+CORRELATED_WITH, with those links undirected and weighted by `rho`. Louvain, PageRank and FastRP run on it in
+`mutate` mode (results stay in memory), are written to the nodes under staging names (`community_id_next`...),
+and one Cypher transaction swaps them into `community_id`, `pagerank` and `embedding`. If anything fails before
+the swap, the staging properties are removed and the previous results stay untouched: the graph never holds a
+mix of two refreshes. Reads never touch GDS: they query the swapped properties.
 """
 
+import threading
 import time
+import uuid
 
 from app.config import get_settings
 from app.database.neo4j import Neo4jClient
 from app.models.companies import Exposure
 from app.models.network import Cluster, GdsReport, RankedCompany, SimilarCompany
 
-GRAPH_NAME = "market"
+GRAPH_NAME = "market"  # prefix: each refresh projects `market_<id>`, so two refreshes never drop each other's
 EMBEDDING_DIMENSION = 64
 RANDOM_SEED = 42
 MEMBERS_PER_CLUSTER = 20
@@ -32,17 +36,10 @@ WITH gds.graph.project($graph, source, target, {relationshipProperties: {rho: r.
 RETURN graph.nodeCount AS nodeCount, graph.relationshipCount AS relationshipCount
 """
 
-# Results of a previous refresh are removed first: a company that lost all its correlations must not keep
-# an old community or embedding.
-CLEAR = """
-MATCH (c:Company) WHERE c.community_id IS NOT NULL OR c.pagerank IS NOT NULL OR c.embedding IS NOT NULL
-REMOVE c.community_id, c.pagerank, c.embedding
-RETURN count(c) AS cleared
-"""
-
 # concurrency 1: Louvain processes nodes in a fixed order, so the same graph gives the same communities.
 LOUVAIN = """
-CALL gds.louvain.write($graph, {relationshipWeightProperty: 'rho', writeProperty: 'community_id', concurrency: 1})
+CALL gds.louvain.mutate($graph, {relationshipWeightProperty: 'rho', mutateProperty: 'community_id_next',
+                                 concurrency: 1})
 YIELD communityCount, modularity, ranLevels, nodePropertiesWritten
 RETURN communityCount, modularity, ranLevels, nodePropertiesWritten
 """
@@ -50,17 +47,48 @@ RETURN communityCount, modularity, ranLevels, nodePropertiesWritten
 # 20 iterations (the default) is not enough on small chains and stars: the error shrinks by about the damping
 # factor (0.85) per iteration. 100 iterations stay cheap and let the report say didConverge = true.
 PAGERANK = """
-CALL gds.pageRank.write($graph, {relationshipWeightProperty: 'rho', writeProperty: 'pagerank', maxIterations: 100})
+CALL gds.pageRank.mutate($graph, {relationshipWeightProperty: 'rho', mutateProperty: 'pagerank_next',
+                                  maxIterations: 100})
 YIELD ranIterations, didConverge, nodePropertiesWritten
 RETURN ranIterations, didConverge, nodePropertiesWritten
 """
 
 FASTRP = """
-CALL gds.fastRP.write($graph, {embeddingDimension: $dimension, relationshipWeightProperty: 'rho',
-                               randomSeed: $seed, concurrency: 1, writeProperty: 'embedding'})
+CALL gds.fastRP.mutate($graph, {embeddingDimension: $dimension, relationshipWeightProperty: 'rho',
+                                randomSeed: $seed, concurrency: 1, mutateProperty: 'embedding_next'})
 YIELD nodeCount, nodePropertiesWritten
 RETURN nodeCount, nodePropertiesWritten
 """
+
+# The three results go to the database together, under staging names.
+WRITE_STAGED = """
+CALL gds.graph.nodeProperties.write($graph, ['community_id_next', 'pagerank_next', 'embedding_next'])
+YIELD propertiesWritten
+RETURN propertiesWritten
+"""
+
+# One transaction: every company takes its staged values, or loses its old ones when it has none (a company
+# that lost all its correlations must not keep an old community or embedding). All or nothing.
+SWAP = """
+MATCH (c:Company)
+WHERE c.community_id IS NOT NULL OR c.pagerank IS NOT NULL OR c.embedding IS NOT NULL
+   OR c.community_id_next IS NOT NULL
+SET c.community_id = c.community_id_next, c.pagerank = c.pagerank_next, c.embedding = c.embedding_next
+REMOVE c.community_id_next, c.pagerank_next, c.embedding_next
+RETURN count(c) AS swapped
+"""
+
+# After a failure: staged values are thrown away, the previous results stay.
+DISCARD = """
+MATCH (c:Company)
+WHERE c.community_id_next IS NOT NULL OR c.pagerank_next IS NOT NULL OR c.embedding_next IS NOT NULL
+REMOVE c.community_id_next, c.pagerank_next, c.embedding_next
+RETURN count(c) AS discarded
+"""
+
+# Two refreshes in this process run one after the other (each also has its own projection name, which covers
+# several API workers): the last one to finish wins, and both leave a complete state.
+_REFRESH_LOCK = threading.Lock()
 
 # Largest communities first. Members are capped (a real community can hold hundreds of stocks) and ordered
 # by PageRank, so the most central ones are shown. Dominant factors: the factors to which the most members
@@ -125,23 +153,34 @@ class GdsService:
         Louvain on CORRELATED_WITH (writes `community_id`), PageRank (writes `pagerank`),
         FastRP (writes `embedding`). Returns what was computed.
         """
+        with _REFRESH_LOCK:
+            return self._refresh(f"{GRAPH_NAME}_{uuid.uuid4().hex[:12]}")
+
+    def _refresh(self, graph: str) -> GdsReport:
+        """One refresh on its own projection: stage everything, then swap in one transaction."""
         start = time.perf_counter()
-        params = {"graph": GRAPH_NAME}
-        cleared = self.client.write(CLEAR)
-        algorithms: dict[str, dict] = {"clear": cleared[0] if cleared else {"cleared": 0}}
+        params = {"graph": graph}
+        algorithms: dict[str, dict] = {}
         edges = self.client.read(COUNT_EDGES)
         if not edges or not edges[0]["relationships"]:
+            swapped = self.client.write(SWAP)  # nothing staged: old results are cleared
+            algorithms["swap"] = swapped[0] if swapped else {"swapped": 0}
             return GdsReport(graphs=[], algorithms=algorithms, duration_ms=_elapsed_ms(start))
-        self.client.write(DROP, params)  # a projection left by an interrupted run
+        swapped_in = False
         try:
             algorithms["projection"] = self.client.write(PROJECT, params)[0]
             algorithms["louvain"] = self.client.write(LOUVAIN, params)[0]
             algorithms["pagerank"] = self.client.write(PAGERANK, params)[0]
             fastrp_params = {**params, "dimension": EMBEDDING_DIMENSION, "seed": RANDOM_SEED}
             algorithms["fastrp"] = self.client.write(FASTRP, fastrp_params)[0]
+            algorithms["staged"] = self.client.write(WRITE_STAGED, params)[0]
+            algorithms["swap"] = self.client.write(SWAP)[0]
+            swapped_in = True
         finally:
+            if not swapped_in:
+                self.client.write(DISCARD)
             self.client.write(DROP, params)
-        return GdsReport(graphs=[GRAPH_NAME], algorithms=algorithms, duration_ms=_elapsed_ms(start))
+        return GdsReport(graphs=[graph], algorithms=algorithms, duration_ms=_elapsed_ms(start))
 
     def clusters(self, limit: int = 10) -> list[Cluster]:
         """Communities of stocks that move together, largest first, with their dominant factors."""

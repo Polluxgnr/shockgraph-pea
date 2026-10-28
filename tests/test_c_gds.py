@@ -1,7 +1,10 @@
 """C2: Louvain, PageRank and FastRP on the mini graph (expected answers in tests/fixtures/README.md)."""
 
+import threading
+
 import pytest
 
+from app.services import gds as gds_module
 from app.services.gds import GRAPH_NAME, GdsService
 from tests.conftest import FakeClient
 
@@ -20,13 +23,38 @@ def refreshed(neo4j_client):
     report = GdsService(neo4j_client).refresh()
     yield neo4j_client, report
     neo4j_client.write(CLEANUP)
-    neo4j_client.write("CALL gds.graph.drop($graph, false) YIELD graphName RETURN graphName", {"graph": GRAPH_NAME})
 
 
 def communities(client) -> dict[str, int]:
     """community_id of every company that has one."""
     rows = client.read("MATCH (c:Company) WHERE c.community_id IS NOT NULL RETURN c.isin AS isin, c.community_id AS id")
     return {row["isin"]: row["id"] for row in rows}
+
+
+def gds_state(client) -> dict:
+    """What a refresh leaves behind: results, staged values and projections."""
+    row = client.read(
+        "MATCH (c:Company) RETURN count(c.community_id) AS communities, count(c.pagerank) AS ranked, "
+        "count(c.embedding) AS embedded, count(c.community_id_next) + count(c.pagerank_next) "
+        "+ count(c.embedding_next) AS staged"
+    )[0]
+    graphs = client.read("CALL gds.graph.list() YIELD graphName RETURN collect(graphName) AS names")[0]["names"]
+    return {**row, "projections": [name for name in graphs if name.startswith(GRAPH_NAME)]}
+
+
+class FailOn:
+    """A real client that fails on the first query containing `marker` (an algorithm crashing mid-refresh)."""
+
+    def __init__(self, client, marker: str) -> None:
+        self.client = client
+        self.marker = marker
+        self.read = client.read
+
+    def write(self, query, params=None):
+        """Fail on the marked query, run the others."""
+        if self.marker in query:
+            raise RuntimeError(f"{self.marker} failed")
+        return self.client.write(query, params)
 
 
 # --- refresh -------------------------------------------------------------------------------------
@@ -62,12 +90,51 @@ def test_every_company_gets_a_pagerank_and_an_embedding(refreshed):
 def test_report_and_projection_dropped(refreshed):
     """The report says what ran; no projection is left in memory."""
     client, report = refreshed
-    assert report.graphs == [GRAPH_NAME]
+    [graph] = report.graphs
+    assert graph.startswith(GRAPH_NAME + "_")
     assert report.algorithms["projection"] == {"nodeCount": 9, "relationshipCount": 12}  # 6 links, both directions
     assert report.algorithms["louvain"]["communityCount"] == 3
     assert report.algorithms["pagerank"]["didConverge"] is True
     assert report.algorithms["fastrp"]["nodePropertiesWritten"] == 9
-    assert client.read("RETURN gds.graph.exists($graph) AS exists", {"graph": GRAPH_NAME}) == [{"exists": False}]
+    assert report.algorithms["swap"]["swapped"] == 9
+    assert gds_state(client) == {"communities": 9, "ranked": 9, "embedded": 9, "staged": 0, "projections": []}
+
+
+@pytest.mark.neo4j
+@pytest.mark.gds
+def test_a_failure_after_louvain_keeps_the_previous_results(refreshed):
+    """Review of #29: PageRank crashes after Louvain. The previous communities and embeddings are untouched,
+    no staged value and no projection is left behind."""
+    client, _ = refreshed
+    before = communities(client)
+    with pytest.raises(RuntimeError, match="pageRank"):
+        GdsService(FailOn(client, "gds.pageRank")).refresh()
+    assert communities(client) == before
+    assert gds_state(client) == {"communities": 9, "ranked": 9, "embedded": 9, "staged": 0, "projections": []}
+
+
+@pytest.mark.neo4j
+@pytest.mark.gds
+def test_two_refreshes_at_the_same_time_both_succeed(refreshed):
+    """Review of #29: two POST /api/network/refresh at once. Each has its own projection, the lock runs them
+    one after the other, and the graph ends complete with nothing left in memory."""
+    client, _ = refreshed
+    reports, errors = [], []
+
+    def run():
+        try:
+            reports.append(GdsService(client).refresh())
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            errors.append(error)
+
+    threads = [threading.Thread(target=run) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=120)
+    assert errors == [] and len(reports) == 2
+    assert reports[0].graphs != reports[1].graphs
+    assert gds_state(client) == {"communities": 9, "ranked": 9, "embedded": 9, "staged": 0, "projections": []}
 
 
 # --- reads ---------------------------------------------------------------------------------------
@@ -138,7 +205,7 @@ def test_network_endpoints(refreshed, api_with, auth_headers):
     assert [item["isin"] for item in similar] == [SILIQA, VELA]
     assert api.get("/api/companies/XX0000000000/similar").status_code == 404
     response = api.post("/api/network/refresh", headers=auth_headers)
-    assert response.status_code == 200 and response.json()["graphs"] == [GRAPH_NAME]
+    assert response.status_code == 200 and response.json()["graphs"][0].startswith(GRAPH_NAME + "_")
 
 
 # --- without a database --------------------------------------------------------------------------
@@ -178,3 +245,28 @@ def test_projection_is_dropped_even_when_an_algorithm_fails():
     with pytest.raises(RuntimeError):
         GdsService(client).refresh()
     assert "gds.graph.drop" in client.queries[-1][0]
+    assert "REMOVE c.community_id_next" in client.queries[-2][0]  # staged values discarded first
+    assert not any("SET c.community_id" in query for query, _ in client.queries)  # never swapped in
+
+
+def test_each_refresh_has_its_own_projection_and_holds_the_lock():
+    """Two refreshes project two different graphs; the lock is held while a refresh talks to the database."""
+
+    class LockWatcher(FakeClient):
+        """Answers every query and notes whether the refresh lock was held."""
+
+        def __init__(self) -> None:
+            super().__init__(rows=[{"relationships": 6, "swapped": 9, "nodeCount": 9}])
+            self.locked: list[bool] = []
+
+        def write(self, query, params=None):
+            """Record the query and the lock state."""
+            self.locked.append(gds_module._REFRESH_LOCK.locked())  # pylint: disable=protected-access
+            return super().write(query, params)
+
+    client = LockWatcher()
+    first, second = GdsService(client).refresh(), GdsService(client).refresh()
+    assert first.graphs != second.graphs
+    assert all(client.locked)
+    dropped = [params["graph"] for query, params in client.queries if "gds.graph.drop" in query]
+    assert dropped == first.graphs + second.graphs
