@@ -14,6 +14,8 @@ One line per decision not settled by AGENTS.md: date, decision, why.
 - 2026-10-26 · C1 · FRED without an API key falls back to the public CSV export, so `FRED_API_KEY` stays optional.
 - 2026-10-27 · C2 · Cypher projection of the CORRELATED_WITH pairs only, not of every Company: an isolated stock would get its own community, a base PageRank and a zero FastRP embedding, which mean nothing.
 - 2026-10-27 · C2 · Results of the previous refresh are removed before writing, so a stock that lost its correlations does not keep an old community or embedding.
+- 2026-10-28 · C2 · (replaces the line above, after Eliott's review) The algorithms run in `mutate` mode, their results are written under staging names, and one Cypher transaction swaps them in, which also clears the companies that lost their correlations. A failure before the swap discards the staging values and leaves the previous results complete.
+- 2026-10-28 · C2 · Each refresh projects `market_<id>` and refreshes are serialized by a lock in the API process: with one fixed name, two refreshes at once could drop each other's projection.
 - 2026-10-27 · C2 · Louvain and FastRP with `concurrency: 1` (and FastRP `randomSeed: 42`): the same graph gives the same communities and embeddings, which the tests and the video need.
 - 2026-10-27 · C2 · PageRank `maxIterations: 100` instead of 20: on the mini graph's chains and stars it did not converge in 20 (`didConverge = false`).
 - 2026-10-27 · C2 · FastRP dimension 64: enough for ~1,500 projected stocks, small enough to store on every node (64 floats) for C3's features.
