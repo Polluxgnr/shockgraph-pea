@@ -235,16 +235,20 @@ def test_fetch_yahoo_chunks_and_single_ticker(monkeypatch):
             return pd.DataFrame({"Close": [1.0, 2.0, 3.0]}, index=index)
         return pd.concat({"Close": pd.DataFrame({name: [1.0, 2.0, 3.0] for name in chunk}, index=index)}, axis=1)
 
+    sleeps: list[float] = []
     monkeypatch.setattr(prices, "YAHOO_CHUNK", 2)
     monkeypatch.setattr(prices.yf, "download", fake_download)
+    monkeypatch.setattr(prices.time, "sleep", sleeps.append)
     frame = prices.fetch_yahoo(["AAA", "BBB", "CCC"], date(2026, 1, 1))
     assert list(frame.columns) == ["AAA", "BBB", "CCC"]
+    assert sleeps == [prices.YAHOO_PAUSE]  # between the two chunks only
 
 
-def test_fetch_yahoo_retries_failed_symbols_without_threads(monkeypatch):
-    """A symbol lost by the threaded call ('database is locked') is fetched again sequentially."""
+def test_fetch_yahoo_retries_failed_symbols_after_a_wait(monkeypatch):
+    """A symbol lost by the threaded call (refused, or 'database is locked') is fetched again sequentially,
+    after a wait so that a rate limit has time to clear."""
     index = pd.bdate_range("2026-01-05", periods=3)
-    calls = []
+    calls, sleeps = [], []
 
     def fake_download(chunk, threads, **kwargs):
         del kwargs
@@ -253,13 +257,16 @@ def test_fetch_yahoo_retries_failed_symbols_without_threads(monkeypatch):
         return pd.concat({"Close": pd.DataFrame({name: [1.0, 2.0, 3.0] for name in kept}, index=index)}, axis=1)
 
     monkeypatch.setattr(prices.yf, "download", fake_download)
+    monkeypatch.setattr(prices.time, "sleep", sleeps.append)
     frame = prices.fetch_yahoo(["AF.PA", "TTE.PA"], date(2026, 1, 1))
     assert sorted(frame.columns) == ["AF.PA", "TTE.PA"]
-    assert calls == [(["AF.PA", "TTE.PA"], True), (["TTE.PA"], False)]
+    assert calls == [(["AF.PA", "TTE.PA"], prices.YAHOO_THREADS), (["TTE.PA"], False)]
+    assert sleeps == [prices.YAHOO_RETRY_WAIT]
 
 
 def test_cache_downloads_only_missing_symbols(tmp_path):
-    """Second call with one new symbol only downloads that symbol; unknown symbols are cached empty."""
+    """Second call with one new symbol only downloads that symbol. A symbol that came back empty is not
+    cached: it is asked again (an empty answer can be a refusal, not only an unknown symbol)."""
     index = pd.bdate_range("2026-01-05", periods=3)
     asked: list[list[str]] = []
 
@@ -270,8 +277,25 @@ def test_cache_downloads_only_missing_symbols(tmp_path):
     path = tmp_path / "cache" / "yahoo_daily.parquet"
     prices.cached_frame(path, ["AAA", "UNKNOWN"], fetch)
     frame = prices.cached_frame(path, ["AAA", "BBB", "UNKNOWN"], fetch)
-    assert asked == [["AAA", "UNKNOWN"], ["BBB"]]
+    assert asked == [["AAA", "UNKNOWN"], ["BBB", "UNKNOWN"]]
     assert list(frame.columns) == ["AAA", "BBB", "UNKNOWN"] and frame["UNKNOWN"].isna().all()
+    assert "UNKNOWN" not in pd.read_parquet(path).columns
+
+
+def test_cache_written_by_the_old_rule_asks_its_empty_columns_again(tmp_path):
+    """A cache file that still holds empty columns (written before this rule) gets them downloaded again."""
+    index = pd.bdate_range("2026-01-05", periods=3)
+    path = tmp_path / "yahoo_daily.parquet"
+    pd.DataFrame({"AAA": [1.0, 2.0, 3.0], "LOST": [None] * 3}, index=index).to_parquet(path)
+    asked: list[list[str]] = []
+
+    def fetch(symbols):
+        asked.append(symbols)
+        return pd.DataFrame({name: [4.0, 5.0, 6.0] for name in symbols}, index=index)
+
+    frame = prices.cached_frame(path, ["AAA", "LOST"], fetch)
+    assert asked == [["LOST"]]
+    assert frame["LOST"].tolist() == [4.0, 5.0, 6.0]
 
 
 # --- Pipeline with a fake database -------------------------------------------------------------------
