@@ -98,3 +98,68 @@ Partial r2 = t² / (t² + dof): the test `test_partial_r2_matches_the_two_regres
   moved with", never as a cause.
 - *Why not store prices in the graph?* Millions of numbers with no relationships: a time series belongs
   in a file or a time-series database; the graph stores what is derived from them.
+
+## C5 · The verifier (`app/agent/verifier.py`, `docs/agent.md`)
+
+### What it does
+
+The writer (the large model) turns the tool results into claims. Before anything reaches the user, the
+verifier checks every claim with five rules and no model:
+
+| Rule | Example | Outcome |
+| --- | --- | --- |
+| Every evidence ref exists in the database | `Company:XX0000000000` | removed |
+| Every number appears in a tool result or argument | "AeroLys beta 0.85" when the tool said -0.41 | removed |
+| The truth level is not stronger than its source | "Petrolia's beta is 0.62" stated as a `fact` | lowered to `estimate` |
+| No causal wording on an estimate, prediction or hypothesis | "Petrolia rises *because* Brent rises" | removed |
+| No buy or sell wording | "you should buy Petrolia" | removed |
+
+Removed claims are not hidden: they go to `removed_claims` with a `reason`, so the trace shows what the model
+tried to say and why it was stopped. If anything was removed, the prose is rebuilt from the claims that
+passed.
+
+### How a number is matched
+
+- Rounding is allowed: "0.62" matches 0.6213 (within half a unit of the last digit written).
+- "48 %" matches a share of 0.48; "+20 %" matches the `pct: 20` the planner passed to the shock tool.
+- "falls 8.2 %" matches -8.2 (no sign written: the size is compared). "+0.41" does not match -0.41.
+- `EUR10Y` and `FR0000120271` are codes, not numbers: digits stuck to letters are ignored.
+- A tool call that ended in an error supports nothing.
+
+### How the truth level is found
+
+The truth level of a number is the one of the result it comes from. Most results say it (`truth` on an
+exposure or a shock line); for the others, the field says it (`weighted_beta` is an estimate, `prob` a
+prediction, `claim_id` a hypothesis). A claim with numbers takes the weakest level of its sources. A claim
+without numbers may be as strong as the strongest result that names all its refs: "Petrolia produces Brent"
+stays a fact even if Petrolia's Brent beta (an estimate) is also in the trace.
+
+### Choices and rejected alternatives
+
+| Choice | Rejected | Why |
+| --- | --- | --- |
+| Rules | A second model as a judge | A model can be argued into agreeing; a number comparison cannot. Rules are also instant and testable |
+| Lower a truth level that is too strong | Remove the claim | The statement is true, only its label is wrong: lowering keeps the information and fixes the label |
+| Remove causal claims | Rewrite them ("moved with") | A rewrite by rule breaks sentences in two languages; removing is safe and the reason is shown |
+| Rebuild the prose from kept claims | Keep the writer's prose | The prose is free text: a removed number could survive in it |
+| Match with rounding | Exact match | The writer must be allowed to write 0.62 for 0.6213, or every answer would be emptied |
+
+### Limits (say them first)
+
+- A number can be supported by the wrong row: if 0.62 appears anywhere in the trace, a claim using 0.62 for
+  another company passes the number rule. The truth rule looks at the right rows, the number rule does not.
+- Causal and advice wording is a list of phrases (English and French). An unusual phrasing can get through.
+- The verifier checks claims, not omissions: an answer that leaves out the most exposed company is not
+  caught.
+
+### Likely questions
+
+- *What if the model invents a number?* Test `test_an_invented_number_is_removed_and_the_prose_rebuilt`:
+  0.85 appears in no tool result, the claim moves to `removed_claims` with "number not found in any tool
+  result: 0.85", and the prose keeps only the verified claim.
+- *What if it calls a beta a fact?* It is lowered to `estimate`, with the reason "stated as fact, its source
+  is a estimate: lowered" (test `test_a_beta_stated_as_a_fact_is_lowered_to_an_estimate`).
+- *Why is "because" forbidden?* A beta measures how two prices moved together. Saying one *causes* the other
+  is a claim the data cannot support (oil and airlines can both react to the economy).
+- *Does the verifier slow the agent down?* One existence query per label (a few index seeks) and a walk
+  through the trace in Python: milliseconds, next to seconds for the model.
