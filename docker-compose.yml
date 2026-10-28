@@ -18,7 +18,7 @@ services:
     volumes:
       - neo4j_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$$NEO4J_PASSWORD\" 'RETURN 1' >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$$NEO4J_PASSWORD\" 'RETURN gds.version()' >/dev/null 2>&1"]
       interval: 10s
       timeout: 10s
       retries: 20
@@ -53,7 +53,7 @@ services:
       neo4j:
         condition: service_healthy
       ollama:
-        condition: service_started
+        condition: service_healthy
 
   nginx:
     image: nginx:1.27-alpine

@@ -10,3 +10,5 @@ One line per decision not settled by AGENTS.md: date, decision, why.
   requested depth explicit and never turns a news hypothesis into a numeric causal estimate.
 - 2026-10-28: validation errors use one compact 422 envelope with field-level details; this keeps client
   handling stable while preserving Pydantic's precise reason for every rejected value.
+- 2026-10-28: container readiness requires `gds.version()` and Ollama health, not merely open ports; this
+  prevents Nginx from serving a partially initialized analytical stack.

@@ -59,3 +59,21 @@ Updated at the end of every session. See the end of docs/roles/b.md for the ques
   the rest of the submitted portfolio can still be analysed safely.
 - Validation run on 2026-10-28: all 33 B4 API tests passed, including 501 and 503 on each of the eight
   service routes, applicable 404 and 422 cases, collection limits and generated OpenAPI examples.
+
+## B5 — Containers and proxy
+
+- Nginx is the only application entry point. FastAPI has only an internal `expose: 8000`; Nginx bounds
+  bodies to 64 KiB and rate-limits `/api/ask` before forwarding it. FastAPI independently protects the
+  agent with a constant-time API-key comparison, so the proxy handles traffic abuse and the application
+  handles authorization.
+- Compose now considers Neo4j healthy only when `gds.version()` executes, and waits for both Neo4j/GDS
+  and Ollama health before starting the API. The API image runs as an unprivileged UID and stores no
+  credentials. Named volumes retain graph data and local models across container recreation.
+- The publish workflow already pushes `latest` and the immutable commit SHA to
+  `ghcr.io/polluxgnr/shockgraph-api` after a main push. Pollux must make the package public because only
+  the upstream owner can change package visibility.
+- Cloud validation on 2026-10-28: Compose configuration and three static container tests passed. The
+  3.245 GB Ollama image downloaded successfully. The API image build could not finish because BuildKit
+  could not resolve either external DNS or the cloud proxy during `pip install`, including after an
+  escalated retry; consequently the three live proxy tests were skipped, not reported as passed. GDS
+  installation also awaits publication of the `graphdatascience.ninja` allowlist change.
