@@ -34,7 +34,7 @@ One line per decision not settled by AGENTS.md: date, decision, why.
   Removes US companies incorporated in Ireland (Medtronic, Accenture...) that brokers refuse in a PEA. Known limits:
   dual listings, UK companies are excluded since Brexit (correct), Swiss companies are excluded (correct).
 - 2026-10-25 · Funds: 14 ETFs in `data/seed/funds.csv`, every ISIN checked with OpenFIGI. TERs and replication
-  come from issuer pages; the rows marked "to check" in the `checked` column must be verified before the video.
+  come from issuer pages; the 3 rows first marked "to check" were verified on 27 Oct (see the last entry).
 - 2026-10-25 · `HOLDS` is not loaded for real funds: issuers publish the substitute baskets of synthetic PEA ETFs
   only through JavaScript pages. The look-through uses `TRACKS`, which is the economic exposure anyway; the
   fixture shows the HOLDS vs TRACKS difference.
