@@ -33,6 +33,14 @@ API reads with `RoutingControl.READ`, which a cluster routes to read replicas.
 Tested in `tests/test_a_guardrails.py`: 29 refused queries (each with its expected reason), 10 accepted ones,
 and `EXPLAIN` of every accepted query on Neo4j to prove that what we accept is valid Cypher.
 
+## How patterns hidden in maps and lists are found
+
+Brackets are read **innermost first**, until none is left. A bracket right after `-` is a relationship: its types
+and length are checked, then it becomes a placeholder. Any other bracket is a list or a comprehension: its labels
+and quantifiers are checked, then it becomes `0`. So `-[:CORRELATED_WITH* {w: [1]}]-` loses its list before the
+relationship is checked, and is refused as unbounded (third review of #23). Map keys (`{isin: ...}`,
+`c {.name, beta: ...}`) are removed only inside a real map, so `RETURN c.name, c:User` still reports `User`.
+
 ## Known limits (said honestly)
 
 - A regex validator is not a full Cypher parser: an exotic but valid query can be refused (false refusal). That is

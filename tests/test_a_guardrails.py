@@ -29,6 +29,9 @@ ACCEPTED = [
     "RETURN c.name, n.name LIMIT 10",
     # a bounded relationship quantifier is fine
     "MATCH (a:Company {isin: $isin})-[:CORRELATED_WITH]-{1,3}(b:Company) RETURN b.name LIMIT 5",
+    # a predicate inside the relationship, and a list in a map projection (third review of #23)
+    "MATCH (a:Company)-[r:SENSITIVE_TO WHERE r.r2 > 0.1]->(f:Factor) RETURN f.code LIMIT 5",
+    "MATCH (c:Company) RETURN c {.name, sectors: [(c)-[:IN_INDUSTRY]->(i:Industry) | i.name]} AS row LIMIT 5",
 ]
 
 REFUSED = [
@@ -73,6 +76,18 @@ REFUSED = [
     ),
     ("RETURN {peers: [(c:Company)-[:CORRELATED_WITH*]-(o:Company) | o.name]} AS row LIMIT 5", "unbounded"),
     ("RETURN {who: [(u:User) | u.name]} AS row LIMIT 5", "unknown label User"),
+    # a list inside the relationship brackets (third review of #23): checked innermost first
+    ("MATCH (a:Company)-[:CORRELATED_WITH* {rho: [0.5][0]}]-(b:Company) RETURN b.name LIMIT 5", "unbounded"),
+    ("MATCH (a:Company)<-[:CORRELATED_WITH* {w: [1]}]-(b:Company) RETURN b.name LIMIT 5", "unbounded"),
+    (
+        "MATCH (a:Company) WHERE EXISTS { (a)-[:CORRELATED_WITH* {w: [1]}]-(:Company) } RETURN a.name LIMIT 5",
+        "unbounded variable-length path",
+    ),
+    ("MATCH (a:Company)-[r:CORRELATED_WITH* {w: [1]}]-(b:Company) RETURN b.name LIMIT 5", "unbounded"),
+    # a label predicate after a comma is not a map key
+    ("MATCH (c:Company) RETURN c.name, c:User AS flag LIMIT 5", "unknown label User"),
+    ("MATCH (c:Company) RETURN [x IN [1, 2] WHERE x > 0 | c:User] AS flags LIMIT 5", "unknown label User"),
+    ("MATCH (c:Company) RETURN [p = (c)-->{1,50}(b) | b] AS far LIMIT 5", "longer than 6"),
 ]
 
 
@@ -137,3 +152,15 @@ def test_count_subquery_in_a_projection_gives_only_the_real_reason(validator):
     )
     assert not result.valid
     assert result.reasons == ["unbounded variable-length path"], result.reasons
+
+
+@pytest.mark.parametrize(
+    "cypher",
+    [
+        "MATCH (a:Company)-[:CORRELATED_WITH* {rho: [0.5][0]}]-(b:Company) RETURN b.name LIMIT 5",
+        "MATCH (a:Company)-[r:CORRELATED_WITH* {w: [1]}]-(b:Company) RETURN b.name LIMIT 5",
+    ],
+)
+def test_list_in_relationship_gives_only_the_real_reason(validator, cypher):
+    """The relationship is checked after its lists are gone: no `unknown label CORRELATED_WITH` in the trace."""
+    assert validator.validate(cypher).reasons == ["unbounded variable-length path"]

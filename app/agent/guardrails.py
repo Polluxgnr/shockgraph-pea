@@ -65,8 +65,8 @@ START_CLAUSES = ("MATCH", "OPTIONAL MATCH", "WITH", "UNWIND", "CALL", "RETURN")
 _STRING = re.compile(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"", re.S)
 _COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
 _BACKTICK = re.compile(r"`([^`]*)`")
-# A relationship pattern is a bracket right after `-` (`-[r:X*..3]->`); other brackets are lists or comprehensions.
-_REL_PATTERN = re.compile(r"-\s*\[([^\[\]]*)\]")
+# The innermost bracket: right after `-` it is a relationship (`-[r:X*..3]->`), otherwise a list or a comprehension.
+_INNER_BRACKET = re.compile(r"(-\s*)?\[([^\[\]]*)\]")
 _LABEL_USE = re.compile(r"(?:\b[A-Za-z_]\w*|\()\s*:\s*(!?[A-Za-z_]\w*(?:\s*[:&|]\s*!?[A-Za-z_]\w*)*)")
 # A quantifier after a node group `)` or, since Neo4j 5.9, right after a relationship (`]-`, `]->`, `-->`).
 _QUANTIFIER = re.compile(r"(?:\)|-|>)\s*(\+|\*|\{\s*(\d*)\s*,\s*(\d*)\s*\}|\{\s*(\d+)\s*\})")
@@ -76,10 +76,9 @@ _LIMIT = re.compile(r"\bLIMIT\b", re.I)
 _STRICT_LIMIT = re.compile(
     r"\bLIMIT\s+(\d+)\s*(?=$|\}|;|\b(?:UNION|MATCH|OPTIONAL|WITH|UNWIND|CALL|RETURN|ORDER|SKIP)\b)", re.I
 )
-# A map key right after `{` or `,`: `isin:` in `{isin: $isin}`, `.name` and `beta:` in `c {.name, beta: r.beta}`.
-# Only the keys are removed: the values stay, so a pattern hidden in a value (`{p: [(a)-[*]-(b) | b]}`) is still
-# checked, and a key is never read as a label (`beta: r` is not the label `r`).
-_MAP_KEY = re.compile(r"([{,]\s*)(?:\.\*|\.[A-Za-z_]\w*|[A-Za-z_]\w*\s*:(?!:))")
+# A `{` that opens a map literal or projection (`{isin: $isin}`, `c {.name}`, `{}`), not a subquery or a quantifier.
+_MAP_START = re.compile(r"\{\s*(?:\}|\.|[A-Za-z_]\w*\s*:(?!:))")
+_MAP_KEY = re.compile(r"\s*(?:\.\*|\.[A-Za-z_]\w*|[A-Za-z_]\w*\s*:(?!:))")
 
 
 @dataclass
@@ -148,20 +147,20 @@ class CypherValidator:
     def _schema_and_paths(text: str) -> list[str]:
         """Labels and relationship types must exist; variable-length paths must be bounded."""
         reasons: list[str] = []
-        scrubbed = _MAP_KEY.sub(r"\1", text)
-        for body in _REL_PATTERN.findall(scrubbed):
-            reasons += _check_relationship(body)
-        without_rels = _REL_PATTERN.sub("-[]", scrubbed)
-        for expression in _LABEL_USE.findall(without_rels):
-            for label in re.split(r"[:&|!\s]+", expression):
-                if label and label not in ALLOWED_LABELS | SUB_LABELS:
-                    reasons.append(f"unknown label {label}")
-        for plus_or_star, low, high, exact in _QUANTIFIER.findall(scrubbed):
-            del low
-            if plus_or_star in ("+", "*") or (plus_or_star.startswith("{") and "," in plus_or_star and not high):
-                reasons.append("unbounded quantified path")
-            elif int(high or exact or 0) > MAX_HOPS:
-                reasons.append(f"quantified path longer than {MAX_HOPS} hops")
+
+        def reduce(match: re.Match) -> str:
+            if match.group(1) is not None:
+                reasons.extend(_check_relationship(match.group(2)))
+                return "-~"
+            reasons.extend(_check_labels_and_quantifiers(match.group(2)))
+            return "0"
+
+        # Innermost brackets first, until none is left: a list inside a relationship (`-[:X* {w: [1]}]-`) is gone
+        # before the relationship is checked, and every character is checked exactly once.
+        remaining, previous = _strip_map_keys(text), None
+        while remaining != previous:
+            previous, remaining = remaining, _INNER_BRACKET.sub(reduce, remaining)
+        reasons += _check_labels_and_quantifiers(remaining)
         return sorted(set(reasons), key=reasons.index)
 
     @staticmethod
@@ -186,9 +185,52 @@ def _has_word(upper: str, phrase: str) -> bool:
     return re.search(pattern, upper) is not None
 
 
+def _strip_map_keys(text: str) -> str:
+    """Remove the keys of map literals and projections, so a key is never read as a label (`beta: r`).
+
+    Only inside a map: `RETURN c.name, c:User` keeps its label predicate. The values stay, so a pattern hidden in a
+    value (`{p: [(a)-[*]-(b) | b]}`) is still checked.
+    """
+    pieces: list[str] = []
+    in_map: list[bool] = []
+    index = 0
+    while index < len(text):
+        char = text[index]
+        pieces.append(char)
+        index += 1
+        if char in "([{":
+            in_map.append(char == "{" and _MAP_START.match(text, index - 1) is not None)
+        elif char in ")]}" and in_map:
+            in_map.pop()
+        if char in "{," and in_map and in_map[-1]:
+            key = _MAP_KEY.match(text, index)
+            if key:
+                index = key.end()
+    return "".join(pieces)
+
+
+def _check_labels_and_quantifiers(text: str) -> list[str]:
+    """Labels outside relationships must exist; quantified path patterns must be bounded."""
+    reasons = []
+    for expression in _LABEL_USE.findall(text):
+        for label in re.split(r"[:&|!\s]+", expression):
+            if label and label not in ALLOWED_LABELS | SUB_LABELS:
+                reasons.append(f"unknown label {label}")
+    for plus_or_star, _, high, exact in _QUANTIFIER.findall(text):
+        if plus_or_star in ("+", "*") or (plus_or_star.startswith("{") and "," in plus_or_star and not high):
+            reasons.append("unbounded quantified path")
+        elif int(high or exact or 0) > MAX_HOPS:
+            reasons.append(f"quantified path longer than {MAX_HOPS} hops")
+    return reasons
+
+
 def _check_relationship(body: str) -> list[str]:
-    """Check one `[...]` pattern such as `r:SENSITIVE_TO|CONSUMES*1..3 {}`: types and length bounds."""
-    body = body.replace("{}", " ").strip()
+    """Check one `[...]` pattern such as `r:SENSITIVE_TO|CONSUMES*1..3 {w: 0}`: types and length bounds."""
+    body = re.split(r"\bWHERE\b", body, maxsplit=1, flags=re.I)[0]
+    previous = None
+    while body != previous:
+        previous, body = body, re.sub(r"\{[^{}]*\}", " ", body)
+    body = body.strip()
     if ":" not in body and "*" not in body:
         return []
     head, star, tail = body.partition("*")
