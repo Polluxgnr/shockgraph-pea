@@ -39,7 +39,10 @@ def search_companies(
     service: CompanyService = Depends(get_company_service),
 ) -> Page[CompanySummary]:
     """Search companies, paginated with a cursor."""
-    return service.search(query=query, sector=sector, pea_only=pea_only, limit=limit, cursor=cursor)
+    try:
+        return service.search(query=query, sector=sector, pea_only=pea_only, limit=limit, cursor=cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid pagination cursor") from exc
 
 
 @router.get("/companies/{isin}", response_model=CompanyDetail, responses=NOT_FOUND)
