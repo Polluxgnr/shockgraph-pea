@@ -12,3 +12,7 @@ One line per decision not settled by AGENTS.md: date, decision, why.
 - 2026-10-26 · C1 · No SENSITIVE_TO on funds: a fund's exposure comes from the look-through (TRACKS → CONSTITUENT), which avoids two inconsistent numbers for the same ETF.
 - 2026-10-26 · C1 · Yahoo downloads in chunks of 100 with threads, then a sequential retry of the failed symbols (yfinance's local cache raises "database is locked" under threads).
 - 2026-10-26 · C1 · FRED without an API key falls back to the public CSV export, so `FRED_API_KEY` stays optional.
+- 2026-10-28 · C6 · `demo.ipynb` runs on the dev database through the services, never with its own Cypher except the label counts and the subgraph query, so the notebook shows what the API returns.
+- 2026-10-28 · C6 · Demo portfolio: 4,000 EUR of Amundi PEA Monde (CW8, MSCI World) and 1,000 EUR each of TotalEnergies, Airbus and BNP Paribas: a typical student PEA, one stock per kind of exposure (oil, airline, bank).
+- 2026-10-28 · C6 · The notebook is saved with its outputs (the jury reads it on GitHub) and the drawing also goes to `docs/img/c_subgraph_totalenergies.png`.
+- 2026-10-28 · C6 · The agent cell checks that Ollama answers first and prints how to start it otherwise, so the notebook still runs to the end without a model.

@@ -98,3 +98,41 @@ Partial r2 = t² / (t² + dof): the test `test_partial_r2_matches_the_two_regres
   moved with", never as a cause.
 - *Why not store prices in the graph?* Millions of numbers with no relationships: a time series belongs
   in a file or a time-series database; the graph stores what is derived from them.
+
+## C6 · Demo notebook (`demo.ipynb`)
+
+### What it does
+
+It goes through the whole project once on the dev database, calling the same services as the API:
+label and relationship counts, the look-through of a student PEA, a Brent +20 % shock on it, the GDS refresh and
+its results, a drawing around TotalEnergies, the ML numbers against the baseline, and one question to the agent.
+
+### What the numbers say (run of 28 October 2026)
+
+- The graph: 2,466 companies, 14 funds, 12 factors; 3,579 `SENSITIVE_TO`, 3,818 `CORRELATED_WITH`,
+  676 `PREDICTED_SENSITIVITY`.
+- Portfolio: 7,000 EUR. The world ETF is counted through its index, so Apple, NVIDIA and Microsoft show up with
+  about 220 EUR each. About 17 % of the money has a Brent estimate (`covered_weight`).
+- Brent +20 %: about +90 EUR (+1.3 %), nearly all from TotalEnergies (beta about 0.39, so about +7.7 % on
+  1,000 EUR). Airbus has a small negative Brent beta (-0.09) but its r2 (0.03) is below the shock's 0.1 threshold,
+  and BNP Paribas has no Brent beta at all. Every line is an `estimate`; 178 more companies only get a direction, from a declared PRODUCES / CONSUMES link.
+- GDS: 1,499 companies in the projection, 139 communities, modularity 0.91; the energy community has Brent, WTI
+  and gas as top factors. The companies most similar to TotalEnergies (FastRP) are Eni, OMV, Galp, Equinor and
+  Repsol: the method finds the oil majors without being told what they do.
+- ML: AUC-PR 0.573 against 0.270 for the baseline, precision@100 of 1.00 (see the C3 section).
+
+### Choices and rejected alternatives
+
+- Services, not raw Cypher: the notebook shows what the API really returns. Rejected: rewriting the queries in
+  the notebook, which could drift from the code.
+- Outputs kept in the file: GitHub renders it, so the jury can read it without running anything.
+- A real-looking portfolio rather than a single stock: the look-through is the point of a PEA tool.
+
+### Likely questions
+
+- *Why is the portfolio impact so small?* Most of the money is in the world ETF, and most of its companies
+  have no significant Brent beta. That is the honest answer: a diversified PEA barely depends on oil.
+- *Is +90 EUR what will happen?* No. It is what the past weekly co-movement implies, labelled `estimate`.
+  It describes the past and does not prove causation.
+- *Why does the agent cell say Ollama is not running?* The model runs locally; without it the cell explains how to
+  start it instead of failing. The video shows it with the model running.
