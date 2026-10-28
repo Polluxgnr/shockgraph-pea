@@ -6,6 +6,11 @@ CORRELATED_WITH, with those links undirected and weighted by `rho`. Louvain, Pag
 and one Cypher transaction swaps them into `community_id`, `pagerank` and `embedding`. If anything fails before
 the swap, the staging properties are removed and the previous results stay untouched: the graph never holds a
 mix of two refreshes. Reads never touch GDS: they query the swapped properties.
+
+The staging properties are shared by every process, so a refresh first takes a lock stored in Neo4j (a
+`GdsRefreshLock` node holding its token): a second API worker or `make gds` meanwhile gets `RefreshInProgress`
+instead of mixing its values in. The swap and the discard only run in a transaction that still matches that
+token, so a refresh that lost its lock can neither publish nor erase anything.
 """
 
 import threading
@@ -17,6 +22,8 @@ from app.database.neo4j import Neo4jClient
 from app.models.companies import Exposure
 from app.models.network import Cluster, GdsReport, RankedCompany, SimilarCompany
 
+LOCK_NAME = "refresh"
+LOCK_STALE_SECONDS = 1_800  # a lock older than this was left by a crashed process: the next refresh takes it
 GRAPH_NAME = "market"  # prefix: each refresh projects `market_<id>`, so two refreshes never drop each other's
 EMBEDDING_DIMENSION = 64
 RANDOM_SEED = 42
@@ -67,28 +74,66 @@ YIELD propertiesWritten
 RETURN propertiesWritten
 """
 
-# One transaction: every company takes its staged values, or loses its old ones when it has none (a company
-# that lost all its correlations must not keep an old community or embedding). All or nothing.
+# The constraint makes MERGE on the lock safe between processes: two of them can never create two lock nodes.
+LOCK_CONSTRAINT = (
+    "CREATE CONSTRAINT gds_refresh_lock IF NOT EXISTS FOR (lock:GdsRefreshLock) REQUIRE lock.name IS UNIQUE"
+)
+
+# Creating the node takes the lock. An existing one is first written to (`checked_at`), which makes this
+# transaction wait for Neo4j's lock on the node, then read again: only an abandoned lock is taken over.
+ACQUIRE = """
+MERGE (lock:GdsRefreshLock {name: $lock})
+ON CREATE SET lock.token = $token, lock.acquired_at = datetime()
+ON MATCH SET lock.checked_at = datetime()
+WITH lock
+CALL (lock) {
+  WITH lock
+  WHERE lock.token <> $token AND lock.acquired_at < datetime() - duration({seconds: $stale})
+  SET lock.token = $token, lock.acquired_at = datetime()
+}
+RETURN lock.token = $token AS acquired, toString(lock.acquired_at) AS since
+"""
+
+RELEASE = "MATCH (lock:GdsRefreshLock {name: $lock, token: $token}) DELETE lock RETURN count(*) AS released"
+
+# One transaction, only while this refresh still holds the lock: every company takes its staged values, or
+# loses its old ones when it has none (a company that lost all its correlations must not keep an old community
+# or embedding). All or nothing. No row back means the lock was lost and nothing changed.
 SWAP = """
-MATCH (c:Company)
-WHERE c.community_id IS NOT NULL OR c.pagerank IS NOT NULL OR c.embedding IS NOT NULL
-   OR c.community_id_next IS NOT NULL
-SET c.community_id = c.community_id_next, c.pagerank = c.pagerank_next, c.embedding = c.embedding_next
-REMOVE c.community_id_next, c.pagerank_next, c.embedding_next
-RETURN count(c) AS swapped
+MATCH (lock:GdsRefreshLock {name: $lock, token: $token})
+SET lock.swapped_at = datetime()
+WITH lock
+CALL (lock) {
+  MATCH (c:Company)
+  WHERE c.community_id IS NOT NULL OR c.pagerank IS NOT NULL OR c.embedding IS NOT NULL
+     OR c.community_id_next IS NOT NULL
+  SET c.community_id = c.community_id_next, c.pagerank = c.pagerank_next, c.embedding = c.embedding_next
+  REMOVE c.community_id_next, c.pagerank_next, c.embedding_next
+  RETURN count(c) AS swapped
+}
+RETURN swapped
 """
 
-# After a failure: staged values are thrown away, the previous results stay.
+# Before staging (leftovers of a crashed refresh) and after a failure: staged values are thrown away, the
+# previous results stay. Also only while holding the lock, so it never erases another refresh's staging.
 DISCARD = """
-MATCH (c:Company)
-WHERE c.community_id_next IS NOT NULL OR c.pagerank_next IS NOT NULL OR c.embedding_next IS NOT NULL
-REMOVE c.community_id_next, c.pagerank_next, c.embedding_next
-RETURN count(c) AS discarded
+MATCH (lock:GdsRefreshLock {name: $lock, token: $token})
+CALL (lock) {
+  MATCH (c:Company)
+  WHERE c.community_id_next IS NOT NULL OR c.pagerank_next IS NOT NULL OR c.embedding_next IS NOT NULL
+  REMOVE c.community_id_next, c.pagerank_next, c.embedding_next
+  RETURN count(c) AS discarded
+}
+RETURN discarded
 """
 
-# Two refreshes in this process run one after the other (each also has its own projection name, which covers
-# several API workers): the last one to finish wins, and both leave a complete state.
+# Two refreshes in this process run one after the other (the Neo4j lock would refuse the second one).
 _REFRESH_LOCK = threading.Lock()
+
+
+class RefreshInProgress(RuntimeError):
+    """Another process holds the refresh lock, or this refresh lost it before the swap."""
+
 
 # Largest communities first. Members are capped (a real community can hold hundreds of stocks) and ordered
 # by PageRank, so the most central ones are shown. Dominant factors: the factors to which the most members
@@ -153,18 +198,35 @@ class GdsService:
         Louvain on CORRELATED_WITH (writes `community_id`), PageRank (writes `pagerank`),
         FastRP (writes `embedding`). Returns what was computed.
         """
+        run_id = uuid.uuid4().hex[:12]
+        lock = {"lock": LOCK_NAME, "token": run_id}
         with _REFRESH_LOCK:
-            return self._refresh(f"{GRAPH_NAME}_{uuid.uuid4().hex[:12]}")
+            self.client.write(LOCK_CONSTRAINT)
+            held = self.client.write(ACQUIRE, {**lock, "stale": LOCK_STALE_SECONDS})
+            if not held or not held[0]["acquired"]:
+                since = held[0]["since"] if held else "?"
+                raise RefreshInProgress(f"another GDS refresh holds the lock since {since}")
+            try:
+                return self._refresh(f"{GRAPH_NAME}_{run_id}", lock)
+            finally:
+                self.client.write(RELEASE, lock)
 
-    def _refresh(self, graph: str) -> GdsReport:
-        """One refresh on its own projection: stage everything, then swap in one transaction."""
+    def _swap(self, lock: dict) -> dict:
+        """Publish the staged values, or fail without changing anything if the lock was lost."""
+        swapped = self.client.write(SWAP, lock)
+        if not swapped:
+            raise RefreshInProgress("the GDS refresh lock was taken over before the swap: nothing was published")
+        return swapped[0]
+
+    def _refresh(self, graph: str, lock: dict) -> GdsReport:
+        """One refresh on its own projection, under the lock: stage everything, then swap in one transaction."""
         start = time.perf_counter()
         params = {"graph": graph}
         algorithms: dict[str, dict] = {}
+        self.client.write(DISCARD, lock)  # staging left by a refresh that crashed
         edges = self.client.read(COUNT_EDGES)
         if not edges or not edges[0]["relationships"]:
-            swapped = self.client.write(SWAP)  # nothing staged: old results are cleared
-            algorithms["swap"] = swapped[0] if swapped else {"swapped": 0}
+            algorithms["swap"] = self._swap(lock)  # nothing staged: old results are cleared
             return GdsReport(graphs=[], algorithms=algorithms, duration_ms=_elapsed_ms(start))
         swapped_in = False
         try:
@@ -174,11 +236,11 @@ class GdsService:
             fastrp_params = {**params, "dimension": EMBEDDING_DIMENSION, "seed": RANDOM_SEED}
             algorithms["fastrp"] = self.client.write(FASTRP, fastrp_params)[0]
             algorithms["staged"] = self.client.write(WRITE_STAGED, params)[0]
-            algorithms["swap"] = self.client.write(SWAP)[0]
+            algorithms["swap"] = self._swap(lock)
             swapped_in = True
         finally:
             if not swapped_in:
-                self.client.write(DISCARD)
+                self.client.write(DISCARD, lock)
             self.client.write(DROP, params)
         return GdsReport(graphs=[graph], algorithms=algorithms, duration_ms=_elapsed_ms(start))
 

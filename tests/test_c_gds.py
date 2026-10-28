@@ -1,12 +1,14 @@
 """C2: Louvain, PageRank and FastRP on the mini graph (expected answers in tests/fixtures/README.md)."""
 
+import multiprocessing
 import threading
 
 import pytest
 
 from app.services import gds as gds_module
 from app.services.gds import GRAPH_NAME, GdsService
-from tests.conftest import FakeClient
+from app.database.neo4j import Neo4jClient
+from tests.conftest import TEST_PASSWORD, TEST_URI, FakeClient
 
 PETROLIA, AEROLYS, VARENNE, SILIQA = "FRTEST000011", "FRTEST000029", "FRTEST000037", "NLTEST000045"
 ORSAY, AUTOROUTE, CUPRUM, HELIOS, VELA = "FRTEST000052", "DETEST000060", "DETEST000078", "FRTEST000086", "USTEST000094"
@@ -137,6 +139,132 @@ def test_two_refreshes_at_the_same_time_both_succeed(refreshed):
     assert gds_state(client) == {"communities": 9, "ranked": 9, "embedded": 9, "staged": 0, "projections": []}
 
 
+OTHER_PROCESS = "TEST-c-other-worker"
+HOLD_LOCK = (
+    "MERGE (lock:GdsRefreshLock {name: 'refresh'}) "
+    "SET lock.token = $token, lock.acquired_at = datetime() - duration({seconds: $age})"
+)
+DROP_LOCKS = "MATCH (lock:GdsRefreshLock) DELETE lock"
+UNSTAGE = "MATCH (c:Company) REMOVE c.community_id_next, c.pagerank_next, c.embedding_next"
+
+
+def lock_tokens(client) -> list[str]:
+    """Tokens of the GDS refresh locks present in the database."""
+    return [row["token"] for row in client.read("MATCH (lock:GdsRefreshLock) RETURN lock.token AS token LIMIT 5")]
+
+
+class StealLockBeforeSwap:
+    """A real client; just before the swap, another process takes the lock over (Eliott's scenario on #29)."""
+
+    def __init__(self, client) -> None:
+        self.client = client
+        self.read = client.read
+
+    def write(self, query, params=None):
+        """Hand the lock to another token right before SWAP, run every query."""
+        if "SET lock.swapped_at" in query:
+            self.client.write(HOLD_LOCK, {"token": OTHER_PROCESS, "age": 0})
+        return self.client.write(query, params)
+
+
+@pytest.mark.neo4j
+@pytest.mark.gds
+def test_a_refresh_held_by_another_process_is_refused(refreshed):
+    """Review of #29: the lock lives in Neo4j, so a refresh from another process (worker, script) is refused
+    instead of mixing its staged values in. Nothing changes and the other process keeps its lock."""
+    client, _ = refreshed
+    before = communities(client)
+    client.write(HOLD_LOCK, {"token": OTHER_PROCESS, "age": 0})
+    try:
+        with pytest.raises(gds_module.RefreshInProgress, match="another GDS refresh"):
+            GdsService(client).refresh()
+        assert communities(client) == before
+        assert gds_state(client) == {"communities": 9, "ranked": 9, "embedded": 9, "staged": 0, "projections": []}
+        assert lock_tokens(client) == [OTHER_PROCESS]
+    finally:
+        client.write(DROP_LOCKS)
+
+
+@pytest.mark.neo4j
+@pytest.mark.gds
+def test_an_abandoned_lock_is_taken_over(refreshed):
+    """A lock older than LOCK_STALE_SECONDS was left by a crashed process: the refresh takes it, runs, and
+    deletes it at the end."""
+    client, _ = refreshed
+    client.write(HOLD_LOCK, {"token": OTHER_PROCESS, "age": gds_module.LOCK_STALE_SECONDS + 60})
+    try:
+        report = GdsService(client).refresh()
+        assert report.algorithms["swap"]["swapped"] == 9
+        assert lock_tokens(client) == []
+    finally:
+        client.write(DROP_LOCKS)
+
+
+@pytest.mark.neo4j
+@pytest.mark.gds
+def test_a_refresh_that_lost_its_lock_publishes_and_erases_nothing(refreshed):
+    """Review of #29: another process takes the lock just before the swap. The swap and the discard only run
+    while holding the lock, so the old results stay, the other process's staging is not erased, and its lock
+    is not released by us."""
+    client, _ = refreshed
+    before = communities(client)
+    try:
+        with pytest.raises(gds_module.RefreshInProgress, match="taken over"):
+            GdsService(StealLockBeforeSwap(client)).refresh()
+        assert communities(client) == before
+        state = gds_state(client)
+        assert state["staged"] > 0 and state["projections"] == []  # left for the new holder, which discards it
+        assert lock_tokens(client) == [OTHER_PROCESS]
+    finally:
+        client.write(DROP_LOCKS)
+        client.write(UNSTAGE)
+
+
+def refresh_in_a_process(start, results) -> None:
+    """One API worker: its own Python process, its own driver, its own threading lock."""
+    client = Neo4jClient(TEST_URI, "neo4j", TEST_PASSWORD)
+    start.wait(timeout=60)
+    try:
+        GdsService(client).refresh()
+        results.put("ok")
+    except gds_module.RefreshInProgress:
+        results.put("refused")
+    except Exception as error:  # pylint: disable=broad-exception-caught
+        results.put(f"error: {error!r}")
+    finally:
+        client.close()
+
+
+@pytest.mark.neo4j
+@pytest.mark.gds
+def test_refreshes_from_four_processes_at_once_never_mix(refreshed):
+    """Review of #29, with real processes this time: 4 workers refresh at the same instant. Each one either
+    succeeds or is refused, none fails, and the graph ends complete, with nothing staged and no lock left."""
+    client, _ = refreshed
+    context = multiprocessing.get_context("spawn")
+    start, results = context.Event(), context.Queue()
+    workers = [context.Process(target=refresh_in_a_process, args=(start, results)) for _ in range(4)]
+    for worker in workers:
+        worker.start()
+    start.set()
+    outcomes = [results.get(timeout=120) for _ in workers]
+    for worker in workers:
+        worker.join(timeout=30)
+    assert all(outcome in ("ok", "refused") for outcome in outcomes), outcomes
+    assert "ok" in outcomes
+    assert gds_state(client) == {"communities": 9, "ranked": 9, "embedded": 9, "staged": 0, "projections": []}
+    assert lock_tokens(client) == []
+
+
+@pytest.mark.neo4j
+@pytest.mark.gds
+def test_a_normal_refresh_leaves_no_lock(refreshed):
+    """The lock node is deleted when the refresh ends."""
+    client, _ = refreshed
+    GdsService(client).refresh()
+    assert lock_tokens(client) == []
+
+
 # --- reads ---------------------------------------------------------------------------------------
 
 
@@ -213,7 +341,7 @@ def test_network_endpoints(refreshed, api_with, auth_headers):
 
 def test_refresh_without_correlations_runs_nothing():
     """No CORRELATED_WITH yet (before C1): old results are cleared, no projection is created."""
-    client = FakeClient(rows=[{"relationships": 0, "cleared": 0}])
+    client = FakeClient(rows=[{"relationships": 0, "acquired": True, "swapped": 0, "discarded": 0}])
     report = GdsService(client).refresh()
     assert report.graphs == [] and not any("gds.graph.project" in query for query, _ in client.queries)
 
@@ -237,15 +365,16 @@ def test_projection_is_dropped_even_when_an_algorithm_fails():
             self.queries.append((query, params or {}))
             if "gds.louvain" in query:
                 raise RuntimeError("louvain failed")
-            return [{"relationships": 6, "cleared": 0, "nodeCount": 9, "relationshipCount": 12}]
+            return [{"relationships": 6, "acquired": True, "discarded": 0, "nodeCount": 9, "relationshipCount": 12}]
 
         read = write
 
     client = FailingClient()
     with pytest.raises(RuntimeError):
         GdsService(client).refresh()
-    assert "gds.graph.drop" in client.queries[-1][0]
-    assert "REMOVE c.community_id_next" in client.queries[-2][0]  # staged values discarded first
+    assert "DELETE lock" in client.queries[-1][0]  # the Neo4j lock is released last
+    assert "gds.graph.drop" in client.queries[-2][0]
+    assert "REMOVE c.community_id_next" in client.queries[-3][0]  # staged values discarded first
     assert not any("SET c.community_id" in query for query, _ in client.queries)  # never swapped in
 
 
@@ -256,7 +385,7 @@ def test_each_refresh_has_its_own_projection_and_holds_the_lock():
         """Answers every query and notes whether the refresh lock was held."""
 
         def __init__(self) -> None:
-            super().__init__(rows=[{"relationships": 6, "swapped": 9, "nodeCount": 9}])
+            super().__init__(rows=[{"relationships": 6, "acquired": True, "swapped": 9, "nodeCount": 9}])
             self.locked: list[bool] = []
 
         def write(self, query, params=None):
