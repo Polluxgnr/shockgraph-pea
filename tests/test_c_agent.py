@@ -88,6 +88,14 @@ class NotWritten:
         return missing
 
 
+class PassThroughVerifier:
+    """AnswerVerifier stand-in: these tests check the agent, tests/test_c_verifier.py checks the verifier."""
+
+    def verify(self, answer):
+        """Return the answer unchanged."""
+        return answer
+
+
 class FakeValidator:
     """CypherValidator stand-in: refuses anything that writes."""
 
@@ -102,6 +110,7 @@ def make_agent(large_script=None, small_script=None, validator=None) -> tuple[Sh
     """An agent on fakes, with scripted small and large models."""
     client = FakeClient(rows=[{"name": "Petrolia SA"}])
     agent = ShockAgent(client)
+    agent.verifier = PassThroughVerifier()
     agent.services = Services(
         client=client,
         companies=FakeCompanies(),
@@ -378,14 +387,18 @@ def test_router_failure_does_not_block_the_question():
     assert not answer.refused and answer.claims
 
 
-def test_verifier_runs_when_available(monkeypatch):
-    """The verifier's output is what the user gets."""
+class DropAllVerifier:
+    """AnswerVerifier stand-in that removes every claim."""
 
-    def drop_all(_, answer):
+    def verify(self, answer):
+        """Move every claim to removed_claims."""
         return answer.model_copy(update={"claims": [], "removed_claims": answer.claims})
 
-    monkeypatch.setattr(agent_graph.AnswerVerifier, "verify", drop_all)
+
+def test_verifier_runs_when_available():
+    """The verifier's output is what the user gets."""
     agent, _ = make_agent(large_script=[AIMessage(content=""), WRITTEN])
+    agent.verifier = DropAllVerifier()
     answer = agent.ask("Quelles actions sont exposées au Brent ?")
     assert not answer.claims and answer.removed_claims
 
