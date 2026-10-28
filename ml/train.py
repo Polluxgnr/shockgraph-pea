@@ -3,9 +3,11 @@
 Question: from a stock's position in the graph (declared PRODUCES / CONSUMES, industry, correlation
 neighbours, Louvain community, FastRP embedding), can we tell whether it is significantly exposed to a factor?
 
-Temporal split: two consecutive windows of `returns_window_years` (3 years each). The model is fitted on the
-older window, features and labels both from it, and evaluated on the recent window, which it never saw: no
-price of the test period reaches training. It is compared with a naive baseline (industry share).
+Temporal split: C1's history (`returns_window_years`, 3 years) cut in two consecutive halves of about 78 weeks,
+above C1's 52-week minimum. The model is fitted on the older half, features and labels both from it, and
+evaluated on the recent half, which it never saw: no price of the test period reaches training. It is compared
+with a naive baseline (industry share). Two full 3-year windows would need a 6-year download, which Yahoo
+rate-limits (two attempts got 894, then 1,124 of 2,380 symbols, without the market proxies).
 
 The chosen model, fitted on the older window, then scores the recent window's pairs that have **no**
 SENSITIVE_TO estimate (no significant beta, or no usable prices). Pairs with prob >= 0.5 get
@@ -80,18 +82,22 @@ def load_estimated(client: Neo4jClient) -> set[tuple[str, str]]:
     return {(row["isin"], row["factor"]) for row in client.read(ESTIMATED, {"limit": MAX_ROWS})}
 
 
-def split_windows(end: date, years: int) -> tuple[Window, Window]:
-    """Two consecutive windows of `years` years ending at `end`: (older, recent). No week is in both."""
-    recent_start = end - timedelta(days=365 * years - 1)
-    older = Window(recent_start - timedelta(days=365 * years), recent_start - timedelta(days=1))
+def split_windows(end: date, days: int) -> tuple[Window, Window]:
+    """Two consecutive windows of `days` days ending at `end`: (older, recent). No week is in both."""
+    recent_start = end - timedelta(days=days - 1)
+    older = Window(recent_start - timedelta(days=days), recent_start - timedelta(days=1))
     return older, Window(recent_start, end)
 
 
+def window_days(settings: Settings) -> int:
+    """Each window is half of C1's history."""
+    return 365 * settings.returns_window_years // 2
+
+
 def load_moves(context: Context, settings: Settings) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Weekly moves over both windows, in their own cache (C1's cache only holds one window)."""
-    start = date.today() - timedelta(days=2 * 365 * settings.returns_window_years + 7)
-    cache_dir = Path(settings.data_dir) / "cache" / "ml"
-    return prices.weekly_moves(context.listings, context.factors, settings, start, cache_dir=cache_dir)
+    """C1's weekly moves, from C1's cache (the same start date, so nothing is downloaded twice)."""
+    start = date.today() - timedelta(days=365 * settings.returns_window_years + 7)
+    return prices.weekly_moves(context.listings, context.factors, settings, start)
 
 
 def write_predictions(client: Neo4jClient, isins: list[str], rows: list[dict]) -> int:
@@ -126,11 +132,11 @@ def both_windows(
     context: Context,
     moves: tuple[pd.DataFrame, pd.DataFrame],
     positions: Callable[[list[dict]], Positions],
-    years: int,
+    days: int,
 ) -> tuple[WindowData, WindowData]:
     """The older and the recent window of the weekly moves, each with its own regressions and network."""
     stock_moves, factor_moves = moves
-    older, recent = split_windows(stock_moves.index[-1].date(), years)
+    older, recent = split_windows(stock_moves.index[-1].date(), days)
     return (
         window_data(context, older, stock_moves, factor_moves, positions),
         window_data(context, recent, stock_moves, factor_moves, positions),
@@ -181,7 +187,7 @@ def run(
         context,
         moves or load_moves(context, settings),
         positions or (lambda pairs: network_positions(client, pairs)),
-        settings.returns_window_years,
+        window_days(settings),
     )
     train, test = labelled(context, older_data), labelled(context, recent_data)
     check_labels(train=train, test=test)

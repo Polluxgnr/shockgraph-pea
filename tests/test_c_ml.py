@@ -41,6 +41,7 @@ PER_INDUSTRY = 10
 LONERS = (0, 9)  # one exposed, one not: no industry co-movement, so no correlation neighbours
 FACTORS = [FactorSource("OIL", "yahoo", "OIL=F", "pct"), FactorSource("FX", "yahoo", "FX=X", "pct")]
 UNPRICED = {"ZZ00UNPRICED1": "ENERGY", "ZZ00UNPRICED2": "AIRLINES", "ZZ00UNPRICED3": "BANKS"}
+SETTINGS = Settings(returns_window_years=4)  # 4 synthetic years: two windows of 2 years (~104 weeks)
 
 
 def isin_of(industry: str, number: int) -> str:
@@ -100,20 +101,22 @@ def component_positions(pairs: list[dict]) -> Positions:
 def universe():
     """The synthetic universe and its two windows."""
     context, stocks, factors = synthetic_universe()
-    older, recent = train.split_windows(stocks.index[-1].date(), 2)
+    older, recent = train.split_windows(stocks.index[-1].date(), train.window_days(SETTINGS))
     return context, stocks, factors, older, recent
 
 
 # --- windows and labels -----------------------------------------------------------------------------
 
 
-def test_windows_are_consecutive_and_never_share_a_week():
-    """The older window ends the day before the recent one starts; both last `years` years."""
-    older, recent = train.split_windows(date(2026, 10, 23), 3)
+def test_windows_are_consecutive_halves_of_c1_history():
+    """3 years of C1 history give two windows of 547 days (~78 weeks, above C1's 52-week minimum); the older
+    one ends the day before the recent one starts."""
+    days = train.window_days(Settings(returns_window_years=3))
+    older, recent = train.split_windows(date(2026, 10, 23), days)
+    assert days == 547
     assert older.end < recent.start
     assert (recent.start - older.end).days == 1
-    assert (recent.end - recent.start).days == 3 * 365 - 1
-    assert (older.end - older.start).days == 3 * 365 - 1
+    assert (recent.end - recent.start).days == (older.end - older.start).days == days - 1
 
 
 def test_window_cut_keeps_only_its_weeks(universe):
@@ -275,8 +278,7 @@ def trained(universe, tmp_path_factory):
     estimated = {(row.isin, row.factor) for row in fits[fits["label"] == 1].itertuples()}
     client = MLClient(context, estimated)
     artifacts = tmp_path_factory.mktemp("artifacts")
-    settings = Settings(returns_window_years=2)
-    report = train.run(client, settings, moves=(stocks, factors), positions=component_positions, artifacts=artifacts)
+    report = train.run(client, SETTINGS, moves=(stocks, factors), positions=component_positions, artifacts=artifacts)
     written = [row for query, params in client.writes if "CREATE" in query for row in params["rows"]]
     return report, written, estimated, client, artifacts
 
