@@ -114,11 +114,12 @@ verifier checks every claim with five rules and no model:
 | A non-refused answer has at least one claim | prose with numbers, `claims` empty | safe answer |
 | The truth level is not stronger than its source | "Petrolia's beta is 0.62" stated as a `fact` | lowered to `estimate` |
 | No causal wording on an estimate, prediction or hypothesis | "Petrolia rises *because* Brent rises" | removed |
-| No buy or sell wording | "you should buy Petrolia" | removed |
+| No buy or sell wording | "you should buy Petrolia", "vous devriez vendre" | removed |
+| Some tool result is about the claim's evidence | "AeroLys produces copper" when no result names AeroLys and copper | removed |
 
 Removed claims are not hidden: they go to `removed_claims` with a `reason`, so the trace shows what the model
-tried to say and why it was stopped. If anything was removed, the prose is rebuilt from the claims that
-passed.
+tried to say and why it was stopped. The answer shown is always the claims that passed, joined: the writer's
+own prose cannot be tied to evidence, so it never reaches the user.
 
 ### How a number is matched
 
@@ -126,6 +127,8 @@ passed.
 - "48 %" matches a share of 0.48; "+20 %" matches the `pct: 20` the planner passed to the shock tool.
 - "falls 8.2 %" matches -8.2 (no sign written: the size is compared). "+0.41" does not match -0.41.
 - `EUR10Y` and `FR0000120271` are codes, not numbers: digits stuck to letters are ignored.
+- "1,000" is read both ways (a thousand, or 1.000 with a French comma); it is supported if either reading
+  matches. Same for "1 000" with a no-break space.
 - A tool call that ended in an error supports nothing.
 - The number must come from the right row. A row that names companies (`isin`, `company_isin`, ...) only
   supports a claim citing one of them. A row without a company (a portfolio's factor line) must share a
@@ -149,7 +152,7 @@ stays a fact even if Petrolia's Brent beta (an estimate) is also in the trace.
 | Rules | A second model as a judge | A model can be argued into agreeing; a number comparison cannot. Rules are also instant and testable |
 | Lower a truth level that is too strong | Remove the claim | The statement is true, only its label is wrong: lowering keeps the information and fixes the label |
 | Remove causal claims | Rewrite them ("moved with") | A rewrite by rule breaks sentences in two languages; removing is safe and the reason is shown |
-| Rebuild the prose from kept claims | Keep the writer's prose | The prose is free text: a removed number could survive in it |
+| Always show the kept claims, not the prose | Keep the writer's prose when nothing was removed | The prose cannot be tied to refs: it could give Petrolia's 0.62 to AeroLys while every claim is right |
 | Match with rounding | Exact match | The writer must be allowed to write 0.62 for 0.6213, or every answer would be emptied |
 | Tie a number to the row that holds it | Any number of the trace | Petrolia's 0.62 would support "AeroLys beta 0.62" |
 | No claims: replace with the safe answer | Ask the writer again | A retry costs another model call and may fail the same way; the safe answer is immediate and honest |
