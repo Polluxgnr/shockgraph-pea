@@ -13,7 +13,9 @@ trace and the database, with rules and no model:
 5. no buy or sell wording, whatever the level.
 
 A claim that breaks rule 1, 2, 4 or 5 moves to `removed_claims` with its reason. When anything was removed,
-the prose answer is rebuilt from the kept claims, so a removed number cannot survive in the text.
+the prose answer is rebuilt from the kept claims, so a removed number cannot survive in the text. An answer
+that is not a refusal but has no claim at all has nothing verified behind it: it becomes NOTHING_VERIFIED.
+(The clarification question "which one do you mean?" ends the graph before the verifier.)
 """
 
 import json
@@ -218,8 +220,10 @@ class AnswerVerifier:
 
     def verify(self, answer: AgentAnswer) -> AgentAnswer:
         """Return a copy of the answer with unsupported claims removed."""
-        if answer.refused or not answer.claims:
+        if answer.refused:
             return answer
+        if not answer.claims:
+            return answer.model_copy(update={"answer": NOTHING_VERIFIED})
         facts = TraceFacts.from_answer(answer)
         existing = self.existing_refs({ref for claim in answer.claims for ref in claim.evidence})
         kept: list[AgentClaim] = []

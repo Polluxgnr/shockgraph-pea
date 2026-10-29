@@ -250,14 +250,20 @@ def test_prose_with_an_unverified_number_is_rebuilt_even_if_every_claim_is_fine(
     assert result.claims == [good] and result.answer == good.text
 
 
-def test_refusals_and_answers_without_claims_are_untouched():
+def test_refusals_are_untouched():
     """Nothing to check: no database call."""
     client = KnownRefs()
     refusal = AgentAnswer(answer="I cannot advise.", refused=True, refusal_reason="advice")
-    question = AgentAnswer(answer="Which Total do you mean: TotalEnergies SE or Total Gabon?")
     assert AnswerVerifier(client).verify(refusal) == refusal
-    assert AnswerVerifier(client).verify(question) == question
     assert client.queries == []
+
+
+def test_an_answer_without_claims_becomes_the_safe_answer():
+    """The writer left the claims out but wrote numbers: nothing was checked, so none of it reaches the user."""
+    unclaimed = AgentAnswer(answer="AeroLys has a beta of 0.62 and falls 30 %.", trace=[EXPOSED, SHOCK])
+    result = AnswerVerifier(KnownRefs()).verify(unclaimed)
+    assert result.answer == NOTHING_VERIFIED
+    assert result.claims == [] and result.trace == unclaimed.trace
 
 
 def test_a_preview_is_used_when_the_full_result_is_missing():
