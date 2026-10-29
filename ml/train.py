@@ -61,17 +61,31 @@ LIMIT $limit
 ESTIMATED = "MATCH (c:Company)-[:SENSITIVE_TO]->(x:Factor) RETURN c.isin AS isin, x.code AS factor LIMIT $limit"
 
 # One statement, so one transaction: the old links are deleted and the new ones created together. If any row
-# fails, Neo4j rolls everything back and the previous predictions stay as they were.
+# fails, Neo4j rolls everything back and the previous predictions stay as they were. The lock node is written
+# first: a second run at the same time waits on it until the first commits, then deletes what the first wrote,
+# so two runs never leave both sets of links. It is deleted at the end; Neo4j holds the lock until the commit.
+LOCK_CONSTRAINT = (
+    "CREATE CONSTRAINT ml_write_lock_name IF NOT EXISTS FOR (lock:MlWriteLock) REQUIRE lock.name IS UNIQUE"
+)
 REPLACE = """
-CALL {
+CALL () {
+    MERGE (lock:MlWriteLock {name: 'predictions'})
+    SET lock.written_at = datetime()
+}
+CALL () {
     MATCH (c:Company)-[p:PREDICTED_SENSITIVITY]->(:Factor) WHERE c.isin IN $isins
     DELETE p
 }
-UNWIND $rows AS row
-MATCH (c:Company {isin: row.isin})
-MATCH (x:Factor {code: row.factor})
-CREATE (c)-[:PREDICTED_SENSITIVITY {prob: row.prob, direction: row.direction, model_version: row.model_version}]->(x)
-RETURN count(*) AS written
+CALL () {
+    UNWIND $rows AS row
+    MATCH (c:Company {isin: row.isin})
+    MATCH (x:Factor {code: row.factor})
+    CREATE (c)-[:PREDICTED_SENSITIVITY {prob: row.prob, direction: row.direction, model_version: row.model_version}]->(x)
+    RETURN count(*) AS written
+}
+MATCH (lock:MlWriteLock {name: 'predictions'})
+DELETE lock
+RETURN written
 """
 
 
@@ -135,8 +149,9 @@ def write_predictions(client: Neo4jClient, isins: list[str], rows: list[dict]) -
     """Replace the PREDICTED_SENSITIVITY links of `isins` by `rows` in one transaction; return how many were written.
 
     All or nothing: a failure keeps the previous predictions. The rows fit in one transaction (676 on the dev
-    database, at most one per company and factor).
+    database, at most one per company and factor). Two runs at once are serialised by the lock node.
     """
+    client.write(LOCK_CONSTRAINT)
     result = client.write(REPLACE, {"isins": isins, "rows": rows})
     return result[0]["written"] if result else 0
 

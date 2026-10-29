@@ -1,5 +1,6 @@
 """C3: features, temporal split, models and predictions (synthetic prices), GDS positions and reads (mini graph)."""
 
+import threading
 from datetime import date
 
 import numpy as np
@@ -316,7 +317,7 @@ def trained(universe, tmp_path_factory):
     client = MLClient(context, estimated)
     artifacts = tmp_path_factory.mktemp("artifacts")
     report = train.run(client, SETTINGS, moves=(stocks, factors), positions=component_positions, artifacts=artifacts)
-    written = [row for query, params in client.writes if "CREATE" in query for row in params["rows"]]
+    written = [row for _, params in client.writes if "rows" in params for row in params["rows"]]
     return report, written, estimated, client, artifacts
 
 
@@ -496,6 +497,29 @@ def test_a_failed_write_keeps_the_previous_predictions(neo4j_client):
         service = GdsService(neo4j_client)
         assert [(item.factor_code, item.prob) for item in service.predicted_exposures(isins[0])] == [("BRENT", 0.8)]
         assert [item.factor_code for item in service.predicted_exposures(isins[1])] == ["COPPER"]
+    finally:
+        neo4j_client.write("MATCH (c:Company) WHERE c.isin IN $isins DETACH DELETE c", {"isins": isins})
+
+
+@pytest.mark.neo4j
+def test_writes_at_the_same_time_never_leave_both_sets(neo4j_client):
+    """Three runs at once, ten times: always exactly the two links of one run, and no lock node left."""
+    isins = ["ZZTESTC30005"]
+    neo4j_client.write("UNWIND $isins AS isin MERGE (:Company {isin: isin, name: 'Test ' + isin})", {"isins": isins})
+    rows = [{"isin": isins[0], "factor": code, "prob": 0.7, "direction": "up", "model_version": "test"}
+            for code in ("BRENT", "COPPER")]  # fmt: skip
+    count = "MATCH (:Company {isin: $isin})-[p:PREDICTED_SENSITIVITY]->() RETURN count(p) AS links"
+    try:
+        for _ in range(10):
+            runs = [
+                threading.Thread(target=train.write_predictions, args=(neo4j_client, isins, rows)) for _ in range(3)
+            ]
+            for run in runs:
+                run.start()
+            for run in runs:
+                run.join()
+            assert neo4j_client.read(count, {"isin": isins[0]})[0]["links"] == 2
+        assert neo4j_client.read("MATCH (lock:MlWriteLock) RETURN count(lock) AS locks")[0]["locks"] == 0
     finally:
         neo4j_client.write("MATCH (c:Company) WHERE c.isin IN $isins DETACH DELETE c", {"isins": isins})
 
