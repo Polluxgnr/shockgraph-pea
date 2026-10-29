@@ -110,6 +110,8 @@ verifier checks every claim with five rules and no model:
 | --- | --- | --- |
 | Every evidence ref exists in the database | `Company:XX0000000000` | removed |
 | Every number appears in a tool result or argument | "AeroLys beta 0.85" when the tool said -0.41 | removed |
+| ... in a result about the claim's evidence | "AeroLys beta 0.62" when 0.62 is Petrolia's beta | removed |
+| A non-refused answer has at least one claim | prose with numbers, `claims` empty | safe answer |
 | The truth level is not stronger than its source | "Petrolia's beta is 0.62" stated as a `fact` | lowered to `estimate` |
 | No causal wording on an estimate, prediction or hypothesis | "Petrolia rises *because* Brent rises" | removed |
 | No buy or sell wording | "you should buy Petrolia" | removed |
@@ -125,6 +127,12 @@ passed.
 - "falls 8.2 %" matches -8.2 (no sign written: the size is compared). "+0.41" does not match -0.41.
 - `EUR10Y` and `FR0000120271` are codes, not numbers: digits stuck to letters are ignored.
 - A tool call that ended in an error supports nothing.
+- The number must come from the right row. A row that names companies (`isin`, `company_isin`, ...) only
+  supports a claim citing one of them. A row without a company (a portfolio's factor line) must share a
+  code with the evidence (`factor_code`, `claim_id`, or what the call was asked about). The arguments
+  ("+20 %") and the length of a returned list support any claim: they are the question, not a result.
+- No claim at all (the writer left them out) means nothing was checked: the answer becomes "I could not
+  verify any statement...". The clarification question never goes through the verifier.
 
 ### How the truth level is found
 
@@ -143,11 +151,14 @@ stays a fact even if Petrolia's Brent beta (an estimate) is also in the trace.
 | Remove causal claims | Rewrite them ("moved with") | A rewrite by rule breaks sentences in two languages; removing is safe and the reason is shown |
 | Rebuild the prose from kept claims | Keep the writer's prose | The prose is free text: a removed number could survive in it |
 | Match with rounding | Exact match | The writer must be allowed to write 0.62 for 0.6213, or every answer would be emptied |
+| Tie a number to the row that holds it | Any number of the trace | Petrolia's 0.62 would support "AeroLys beta 0.62" |
+| No claims: replace with the safe answer | Ask the writer again | A retry costs another model call and may fail the same way; the safe answer is immediate and honest |
 
 ### Limits (say them first)
 
-- A number can be supported by the wrong row: if 0.62 appears anywhere in the trace, a claim using 0.62 for
-  another company passes the number rule. The truth rule looks at the right rows, the number rule does not.
+- A row is matched by its ISIN and codes, not by the meaning of the field: a claim calling Petrolia's r2 its
+  beta (both on the same row) passes. The first version was weaker: any 0.62 in the trace supported any
+  claim; Eliott found it in review and the number is now tied to its row.
 - Causal and advice wording is a list of phrases (English and French). An unusual phrasing can get through.
 - The verifier checks claims, not omissions: an answer that leaves out the most exposed company is not
   caught.
@@ -155,8 +166,8 @@ stays a fact even if Petrolia's Brent beta (an estimate) is also in the trace.
 ### Likely questions
 
 - *What if the model invents a number?* Test `test_an_invented_number_is_removed_and_the_prose_rebuilt`:
-  0.85 appears in no tool result, the claim moves to `removed_claims` with "number not found in any tool
-  result: 0.85", and the prose keeps only the verified claim.
+  0.85 appears in no tool result, the claim moves to `removed_claims` with "number not found in a tool
+  result about its evidence: 0.85", and the prose keeps only the verified claim.
 - *What if it calls a beta a fact?* It is lowered to `estimate`, with the reason "stated as fact, its source
   is a estimate: lowered" (test `test_a_beta_stated_as_a_fact_is_lowered_to_an_estimate`).
 - *Why is "because" forbidden?* A beta measures how two prices moved together. Saying one *causes* the other
