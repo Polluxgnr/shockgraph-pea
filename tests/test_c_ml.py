@@ -481,6 +481,25 @@ def test_write_predictions_replaces_and_cleans_up(neo4j_client):
         neo4j_client.write("MATCH (c:Company) WHERE c.isin IN $isins DETACH DELETE c", {"isins": isins})
 
 
+@pytest.mark.neo4j
+def test_a_failed_write_keeps_the_previous_predictions(neo4j_client):
+    """A bad row in the middle rolls the whole replacement back: the old links are neither deleted nor mixed."""
+    isins = ["ZZTESTC30003", "ZZTESTC30004"]
+    neo4j_client.write("UNWIND $isins AS isin MERGE (:Company {isin: isin, name: 'Test ' + isin})", {"isins": isins})
+    try:
+        row = {"isin": isins[0], "factor": "BRENT", "prob": 0.8, "direction": "up", "model_version": "test-v1"}
+        assert train.write_predictions(neo4j_client, isins, [row, {**row, "isin": isins[1], "factor": "COPPER"}]) == 2
+        new = {**row, "prob": 0.6, "model_version": "test-v2"}
+        broken = {**new, "isin": isins[1], "prob": {"not": "a number"}}  # a map is not a valid property value
+        with pytest.raises(Exception):
+            train.write_predictions(neo4j_client, isins, [new, broken])
+        service = GdsService(neo4j_client)
+        assert [(item.factor_code, item.prob) for item in service.predicted_exposures(isins[0])] == [("BRENT", 0.8)]
+        assert [item.factor_code for item in service.predicted_exposures(isins[1])] == ["COPPER"]
+    finally:
+        neo4j_client.write("MATCH (c:Company) WHERE c.isin IN $isins DETACH DELETE c", {"isins": isins})
+
+
 def test_window_data_with_a_window_outside_the_prices(universe):
     """A window with no weeks gives no regression and no correlation, without failing."""
     context, stocks, factors, _, _ = universe

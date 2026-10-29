@@ -37,7 +37,6 @@ PROB_MIN = 0.5
 DOWNLOAD_ROUNDS = 8
 ROUND_WAIT = 120  # seconds between download rounds, for Yahoo's rate limit to clear
 MAX_ROWS = 100_000
-WRITE_BATCH = 1_000
 ARTIFACTS = Path(__file__).parent / "artifacts"
 
 COMPANIES = """
@@ -61,12 +60,13 @@ LIMIT $limit
 
 ESTIMATED = "MATCH (c:Company)-[:SENSITIVE_TO]->(x:Factor) RETURN c.isin AS isin, x.code AS factor LIMIT $limit"
 
-CLEAR = """
-MATCH (c:Company)-[p:PREDICTED_SENSITIVITY]->(:Factor) WHERE c.isin IN $isins
-DELETE p
-"""
-
-WRITE = """
+# One statement, so one transaction: the old links are deleted and the new ones created together. If any row
+# fails, Neo4j rolls everything back and the previous predictions stay as they were.
+REPLACE = """
+CALL {
+    MATCH (c:Company)-[p:PREDICTED_SENSITIVITY]->(:Factor) WHERE c.isin IN $isins
+    DELETE p
+}
 UNWIND $rows AS row
 MATCH (c:Company {isin: row.isin})
 MATCH (x:Factor {code: row.factor})
@@ -132,13 +132,13 @@ def load_moves(
 
 
 def write_predictions(client: Neo4jClient, isins: list[str], rows: list[dict]) -> int:
-    """Replace the PREDICTED_SENSITIVITY links of `isins` by `rows`; return how many were written."""
-    client.write(CLEAR, {"isins": isins})
-    written = 0
-    for offset in range(0, len(rows), WRITE_BATCH):
-        result = client.write(WRITE, {"rows": rows[offset : offset + WRITE_BATCH]})
-        written += result[0]["written"] if result else 0
-    return written
+    """Replace the PREDICTED_SENSITIVITY links of `isins` by `rows` in one transaction; return how many were written.
+
+    All or nothing: a failure keeps the previous predictions. The rows fit in one transaction (676 on the dev
+    database, at most one per company and factor).
+    """
+    result = client.write(REPLACE, {"isins": isins, "rows": rows})
+    return result[0]["written"] if result else 0
 
 
 def check_labels(**tables: pd.DataFrame) -> None:
