@@ -23,7 +23,7 @@ from ml.features import (
     pair_features,
     window_data,
 )
-from ml.models import candidates, evaluate, industry_baseline, precision_at_k
+from ml.models import candidates, evaluate, industry_baseline, precision_at_k, validation_split
 from ml.network import GRAPH_NAME, network_positions
 from scripts.ingest.prices import MARKET_EUROPE, FactorSource, Listing
 from tests.conftest import FakeClient
@@ -498,6 +498,29 @@ def test_a_failed_write_keeps_the_previous_predictions(neo4j_client):
         assert [item.factor_code for item in service.predicted_exposures(isins[1])] == ["COPPER"]
     finally:
         neo4j_client.write("MATCH (c:Company) WHERE c.isin IN $isins DETACH DELETE c", {"isins": isins})
+
+
+def labelled_table(exposed: set[str], companies: int = 12) -> pd.DataFrame:
+    """Three pairs per company; every pair of the companies in `exposed` is exposed."""
+    isins = [f"ZZ{index:010d}" for index in range(companies)]
+    return pd.DataFrame(
+        [{"isin": isin, "factor": code, "label": int(isin in exposed)} for isin in isins for code in ("A", "B", "C")]
+    )
+
+
+def test_validation_split_has_both_classes_on_each_side():
+    """Few exposed companies: the split chosen still has exposed and unexposed pairs in fit and in check."""
+    table = labelled_table({"ZZ0000000001", "ZZ0000000007"})
+    fit, check = validation_split(table)
+    assert fit["label"].nunique() == 2 and check["label"].nunique() == 2
+    assert not set(fit["isin"]) & set(check["isin"])
+    assert validation_split(table)[1].equals(check)  # deterministic
+
+
+def test_validation_split_with_one_exposed_company_is_refused():
+    """One exposed company cannot be on both sides: an explicit error, not a crash inside scikit-learn."""
+    with pytest.raises(ValueError, match="too few exposed companies"):
+        validation_split(labelled_table({"ZZ0000000003"}))
 
 
 def test_window_data_with_a_window_outside_the_prices(universe):

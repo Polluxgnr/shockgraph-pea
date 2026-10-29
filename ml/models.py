@@ -25,6 +25,7 @@ from sklearn.preprocessing import StandardScaler
 
 RANDOM_SEED = 42
 VALIDATION_SHARE = 0.25
+SPLIT_TRIES = 20
 REPORT_KS = (50, 100, 500)
 TOP_IMPORTANCES = 8
 
@@ -70,15 +71,31 @@ def evaluate(labels: np.ndarray, scores: np.ndarray, cutoffs: tuple[int, ...] = 
     }
 
 
+def validation_split(train: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """(fit, check): about a quarter of the companies held out, both parts holding exposed and unexposed pairs.
+
+    The global check of the labels does not guarantee it: a held-out quarter can, by chance, hold no exposed pair
+    (AUC-PR undefined) or take them all (nothing to fit). Up to SPLIT_TRIES splits are tried in a fixed order
+    (same seed, so the same run gives the same split); none valid is an explicit error.
+    """
+    splitter = GroupShuffleSplit(n_splits=SPLIT_TRIES, test_size=VALIDATION_SHARE, random_state=RANDOM_SEED)
+    for fit_rows, check_rows in splitter.split(train, groups=train["isin"]):
+        fit, check = train.iloc[fit_rows], train.iloc[check_rows]
+        if fit["label"].nunique() == 2 and check["label"].nunique() == 2:
+            return fit, check
+    raise ValueError(
+        f"no split of {train['isin'].nunique()} companies puts exposed and unexposed pairs on both sides "
+        f"in {SPLIT_TRIES} tries: too few exposed companies to choose a model"
+    )
+
+
 def choose(train: pd.DataFrame, columns: list[str]) -> str:
     """Name of the candidate with the best AUC-PR on companies held out of the *training* window.
 
     The test window is never used to choose, so its scores stay an honest estimate. Companies, not pairs,
     are held out: the 12 pairs of one company look alike and would make validation too easy.
     """
-    splitter = GroupShuffleSplit(n_splits=1, test_size=VALIDATION_SHARE, random_state=RANDOM_SEED)
-    fit_rows, check_rows = next(splitter.split(train, groups=train["isin"]))
-    fit, check = train.iloc[fit_rows], train.iloc[check_rows]
+    fit, check = validation_split(train)
     scores = {}
     for name, model in candidates().items():
         model.fit(fit[columns], fit["label"])
