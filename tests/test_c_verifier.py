@@ -86,13 +86,13 @@ def verify(*claims: AgentClaim, trace=(EXPOSED, EXPOSURES, SHOCK, CLAIMS, PREDIC
 
 
 def test_a_supported_claim_is_kept_unchanged():
-    """Beta and r2 as the tool returned them (rounded): kept, prose untouched, no reason."""
+    """Beta and r2 as the tool returned them (rounded): kept, no reason; the answer is the verified claim."""
     good = claim("Petrolia historically moved with Brent: beta 0.62, r2 48 %.", "estimate",
                  f"Company:{PETROLIA}", "Factor:BRENT")  # fmt: skip
     result = verify(good, text="Petrolia moved with Brent (beta 0.62).")
     assert result.claims == [good]
     assert result.removed_claims == []
-    assert result.answer == "Petrolia moved with Brent (beta 0.62)."
+    assert result.answer == good.text
 
 
 @pytest.mark.parametrize(
@@ -109,6 +109,15 @@ def test_rounding_signs_and_formats_are_accepted(text, isin):
     """What a writer may legitimately do with a number the tool returned."""
     result = verify(claim(text, "estimate", f"Company:{isin}", "Factor:BRENT"))
     assert len(result.claims) == 1, result.removed_claims
+
+
+def test_thousands_separators_are_read_both_ways():
+    """'1,000 EUR' is a thousand (English), '0,62' a decimal (French): both match what the tool returned."""
+    trade = ToolCall(tool="portfolio_xray", args={"positions": [{"isin": PETROLIA, "amount_eur": 1000}]},
+                     result={"total_eur": 1000, "count": 2470})  # fmt: skip
+    for text in ("Petrolia: a 1,000 EUR position.", "Petrolia: 1\u202f000 EUR.", "2,470 companies including Petrolia."):
+        assert verify(claim(text, "fact", f"Company:{PETROLIA}"), trace=[trade]).claims, text
+    assert not verify(claim("Petrolia: a 1,500 EUR position.", "fact", f"Company:{PETROLIA}"), trace=[trade]).claims
 
 
 def test_codes_and_isins_are_not_numbers():
@@ -159,6 +168,21 @@ def test_a_row_without_company_must_share_a_code_with_the_evidence():
     assert not verify(claim("Weighted beta to EUR/USD: 0.62.", "estimate", "Factor:EURUSD"), trace=[xray]).claims
 
 
+def test_a_claim_no_tool_result_is_about_is_removed():
+    """No number to check, real refs, but nothing in the trace talks about AeroLys and EUR/USD: removed."""
+    invented = claim("AeroLys is exposed to EUR/USD.", "fact", f"Company:{AEROLYS}", "Factor:EURUSD")
+    result = verify(invented, trace=[EXPOSED, SHOCK])
+    assert result.claims == [] and "no tool result is about" in result.removed_claims[0].reason
+    assert verify(claim("AeroLys produces Brent.", "fact", f"Company:{AEROLYS}", "Factor:BRENT"), trace=[]).claims == []
+
+
+def test_the_prose_is_always_the_verified_claims():
+    """The prose gives Petrolia's 0.62 to AeroLys while the claim is right: the prose never reaches the user."""
+    good = claim("Petrolia's beta to Brent is 0.62.", "estimate", f"Company:{PETROLIA}", "Factor:BRENT")
+    result = verify(good, trace=[EXPOSED], text="AeroLys has a beta of 0.62 to Brent.")
+    assert result.answer == good.text
+
+
 def test_a_wrong_sign_is_an_unsupported_number():
     """AeroLys moves against Brent (-0.41): '+0.41' is not what the tool said."""
     result = verify(claim("AeroLys: beta +0.41 to Brent.", "estimate", f"Company:{AEROLYS}", "Factor:BRENT"))
@@ -187,10 +211,32 @@ def test_evidence_must_exist_in_the_database():
     assert result.answer == NOTHING_VERIFIED
 
 
-def test_buy_or_sell_wording_is_removed():
-    """Even with a verified number, advice never reaches the user."""
-    result = verify(claim("Beta 0.62: you should buy Petrolia now.", "estimate", f"Company:{PETROLIA}"))
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Beta 0.62: you should buy Petrolia now.",
+        "You should consider buying Petrolia (beta 0.62).",
+        "It may be a good time to sell Petrolia (beta 0.62).",
+        "Petrolia has a beta of 0.62. Sell before Brent falls.",
+        "Vous devriez vendre Petrolia (bêta 0,62).",
+        "Il serait intéressant de renforcer Petrolia (bêta 0,62).",
+        "Allégez Petrolia (bêta 0,62).",
+    ],
+)
+def test_buy_or_sell_wording_is_removed(text):
+    """Even with a verified number, advice never reaches the user, in English or in French."""
+    result = verify(claim(text, "estimate", f"Company:{PETROLIA}"))
     assert result.claims == [] and "never advises" in result.removed_claims[0].reason
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Petrolia sells oil and has a beta of 0.62 to Brent.", "Airlines buy jet fuel: AeroLys beta −0.41 to Brent."],
+)
+def test_describing_what_a_company_buys_or_sells_is_not_advice(text):
+    """'sells oil' describes a business, not an order to the user."""
+    isin = AEROLYS if "AeroLys" in text else PETROLIA
+    assert verify(claim(text, "estimate", f"Company:{isin}", "Factor:BRENT")).claims
 
 
 # --- truth levels ------------------------------------------------------------------------------------
@@ -254,6 +300,10 @@ def test_a_shock_line_gives_its_truth_level_through_the_company():
         "Petrolia monte à cause du Brent (bêta 0,62).",
         "La hausse de 12,4 % est due au pétrole.",
         "Petrolia gagne 12,4 % grâce au Brent.",
+        "Petrolia rose thanks to Brent (beta 0.62).",
+        "Petrolia rose as a result of oil (beta 0.62).",
+        "Petrolia monte en raison du Brent (bêta 0,62).",
+        "Petrolia gagne 12,4 % suite à la hausse du Brent.",
     ],
 )
 def test_causal_wording_on_an_estimate_is_removed(text):

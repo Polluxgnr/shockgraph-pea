@@ -15,8 +15,11 @@ trace and the database, with rules and no model:
    numbers describe co-movement, not causes;
 5. no buy or sell wording, whatever the level.
 
-A claim that breaks rule 1, 2, 4 or 5 moves to `removed_claims` with its reason. When anything was removed,
-the prose answer is rebuilt from the kept claims, so a removed number cannot survive in the text. An answer
+A claim must also be about something the trace returned: one result object (with what its call was asked)
+names every key of its evidence. "AeroLys produces Brent" with nothing about AeroLys and Brent in the trace goes.
+
+A claim that breaks a rule moves to `removed_claims` with its reason. The prose answer is always rebuilt from
+the kept claims: free prose cannot be tied to evidence, so "AeroLys beta 0.62" could hide in it. An answer
 that is not a refusal but has no claim at all has nothing verified behind it: it becomes NOTHING_VERIFIED.
 (The clarification question "which one do you mean?" ends the graph before the verifier.)
 """
@@ -57,17 +60,25 @@ EXISTING = {
     "Article": "MATCH (n:Article) WHERE n.url IN $keys RETURN n.url AS key LIMIT $limit",
 }
 
-# A number not glued to letters or digits: "EUR10Y" and "FR0000120271" are codes, not numbers.
-NUMBER = re.compile(r"(?<![\w.,])([+\-−]?)(\d+(?:[.,]\d+)?)(?![\w])(\s*%)?")
+# A number not glued to letters or digits: "EUR10Y" and "FR0000120271" are codes, not numbers. Groups of three
+# digits after a comma or a (narrow) no-break space are thousands: "1,000", "2 470".
+NUMBER = re.compile(r"(?<![\w.,])([+\-−]?)(\d{1,3}(?:[,\u00a0\u202f]\d{3})+(?:\.\d+)?|\d+(?:[.,]\d+)?)(?![\w])(\s*%)?")
+THOUSANDS = re.compile(r"\d{1,3}(?:[,\u00a0\u202f]\d{3})+(?:\.\d+)?")
 
 CAUSAL = re.compile(
-    r"\b(because|caused|causes|due to|leads? to|drives|driven by|results? in|"
-    r"parce que|[àa] cause d(?:e|u|es|')|provoqu\w*|entra[iî]n\w*|d[uû]e?s? (?:à|au|aux)|gr[âa]ce (?:à|au|aux))",
+    r"\b(because|caused|causes|due to|leads? to|drives|driven by|results? in|as a result of|thanks to|owing to|"
+    r"parce que|[àa] cause d(?:e|u|es|')|provoqu\w*|entra[iî]n\w*|d[uû]e?s? (?:à|au|aux)|gr[âa]ce (?:à|au|aux)|"
+    r"en raison d(?:e|u|es|')|suite (?:à|au|aux)|sous l'effet d(?:e|u|es|')|du fait d(?:e|u|es|'))",
     re.IGNORECASE,
 )
+# A direct order, or a modal / recommendation word followed closely by buy or sell (English and French).
 ADVICE = re.compile(
-    r"\b(you should (buy|sell)|(buy|sell) (it|this|these|now)|we recommend|i recommend|"
-    r"achetez|vendez|il faut (acheter|vendre)|je (vous )?(conseille|recommande))",
+    r"(?:^|[.!?;:]\s+)(buy|sell)\b|"
+    r"\b(achetez|vendez|renforcez|all[ée]gez)\b|"
+    r"\b(should|could|might|consider\w*|worth|time to|idea to|recommend\w*|advis\w*|suggest\w*)\b[^.!?]{0,40}?"
+    r"\b(buy|sell|buying|selling|purchas\w*)\b|"
+    r"\b(devr\w*|dev(?:ez|ons)|conseill\w*|recommand\w*|sugg[eè]r\w*|faut|int[ée]ressant|moment)\b[^.!?]{0,40}?"
+    r"\b(acheter|vendre|achat|vente|renforcer|all[ée]ger|c[ée]der)\b",
     re.IGNORECASE,
 )
 
@@ -87,8 +98,18 @@ class Number:
 
     @property
     def value(self) -> float:
-        """'−', '0,62' -> -0.62 (French decimal comma, Unicode minus)."""
-        return _to_float(self.sign, self.digits)
+        """'−', '0,62' -> -0.62 (French decimal comma, Unicode minus); '1,000' -> 1000."""
+        return self.readings()[0][0]
+
+    def readings(self) -> list[tuple[float, int]]:
+        """(value, decimals shown) for each way to read the digits: '1,000' is 1000, or 1.000 with a French comma."""
+        readings = []
+        if THOUSANDS.fullmatch(self.digits):
+            plain = re.sub(r"[,\u00a0\u202f]", "", self.digits)
+            readings.append((_to_float(self.sign, plain), len(plain.partition(".")[2])))
+        if re.fullmatch(r"\d+(?:[.,]\d+)?", self.digits):
+            readings.append((_to_float(self.sign, self.digits), len(self.digits.replace(",", ".").partition(".")[2])))
+        return readings
 
     def __str__(self) -> str:
         return f"{self.sign}{self.digits}{'%' if self.percent else ''}"
@@ -105,14 +126,14 @@ def matches(number: Number, values: list[float]) -> bool:
     "0.62" matches 0.6213 (half a unit of the last digit shown). With a "%", a share (0.48) matches "48 %"
     too. Without a sign only the size is compared ("falls 8.2 %" matches -8.2); with a sign, it must agree.
     """
-    decimals = len(number.digits.replace(",", ".").partition(".")[2])
-    tolerance = 0.5 * 10**-decimals + 1e-9
-    for value in values:
-        for candidate in (value, value * 100) if number.percent else (value,):
-            if number.sign and candidate and math.copysign(1, candidate) != math.copysign(1, number.value):
-                continue
-            if abs(abs(candidate) - abs(number.value)) <= tolerance:
-                return True
+    for written, decimals in number.readings():
+        tolerance = 0.5 * 10**-decimals + 1e-9
+        for value in values:
+            for candidate in (value, value * 100) if number.percent else (value,):
+                if number.sign and candidate and math.copysign(1, candidate) != math.copysign(1, written):
+                    continue
+                if abs(abs(candidate) - abs(written)) <= tolerance:
+                    return True
     return False
 
 
@@ -127,6 +148,11 @@ class Source:
     numbers: tuple[float, ...]
     isins: frozenset[str]
     codes: frozenset[str]
+    texts: frozenset[str] = frozenset()
+
+    def names_all(self, keys: set[str]) -> bool:
+        """True when the object, its parents or its call's arguments name every key."""
+        return keys <= self.isins | self.codes | self.texts
 
     def supports(self, number: "Number", keys: set[str]) -> bool:
         """True when the object holds the number and is about one of the claim's evidence keys."""
@@ -168,7 +194,7 @@ class TraceFacts:
             own_isins, own_codes = _identity(value)
             isins = frozenset(own_isins) or isins
             codes = codes | own_codes
-            self.sources.append(Source(tuple(_held_numbers(value)), isins, codes))
+            self.sources.append(Source(tuple(_held_numbers(value)), isins, codes, frozenset(_texts(value))))
             for item in value.values():
                 if isinstance(item, (dict, list, tuple)):
                     self.bind(item, isins, codes)
@@ -178,6 +204,10 @@ class TraceFacts:
                 self.bind(item, isins, codes)
         elif isinstance(value, (int, float)) and not isinstance(value, bool):
             self.free.append(float(value))  # a bare number, outside any object
+
+    def about(self, keys: set[str]) -> bool:
+        """True when one result object of the trace is about every key of the evidence."""
+        return any(source.names_all(keys) for source in self.sources)
 
     def unsupported_for(self, text: str, keys: set[str]) -> list[Number]:
         """Numbers of a claim that neither the arguments nor a result object about its evidence support."""
@@ -203,10 +233,6 @@ class TraceFacts:
             self.numbers.append(float(len(value)))  # "3 companies" counts a list a tool returned
             for item in value:
                 self.collect(item)
-
-    def unsupported(self, text: str) -> list[Number]:
-        """Numbers of a text that no tool result supports."""
-        return [number for number in numbers_in(text) if not matches(number, self.numbers)]
 
     def truth_of(self, keys: set[str], numbers: list[Number]) -> str | None:
         """Truth level the sources allow for a claim about `keys` (ISINs, codes...).
@@ -328,9 +354,7 @@ class AnswerVerifier:
                 removed.append(claim.model_copy(update={"reason": reason}))
             else:
                 kept.append(checked)
-        text = answer.answer
-        if len(removed) > len(answer.removed_claims) or facts.unsupported(text):
-            text = " ".join(claim.text for claim in kept) or NOTHING_VERIFIED
+        text = " ".join(claim.text for claim in kept) or NOTHING_VERIFIED
         return answer.model_copy(update={"answer": text, "claims": kept, "removed_claims": removed})
 
     def existing_refs(self, refs: set[str]) -> set[str]:
@@ -349,21 +373,31 @@ class AnswerVerifier:
 
 def check_claim(claim: AgentClaim, facts: TraceFacts, existing: set[str]) -> tuple[AgentClaim, str | None]:
     """The claim as it may be shown (truth lowered if needed), or the reason it must be removed."""
-    if not claim.evidence:
-        return claim, "no evidence ref"
-    missing = [ref for ref in claim.evidence if ref not in existing]
-    if missing:
-        return claim, f"evidence not in the database: {', '.join(missing)}"
-    keys = {split_ref(ref)[1] for ref in claim.evidence}
-    unsupported = facts.unsupported_for(claim.text, keys)
-    if unsupported:
-        return claim, f"number not found in a tool result about its evidence: {', '.join(map(str, unsupported))}"
+    reason = evidence_problem(claim, facts, existing)
+    if reason:
+        return claim, reason
     if ADVICE.search(claim.text):
         return claim, "buy or sell wording: the app explains exposures, it never advises"
     checked = lower_truth(claim, facts)
     if checked.truth != "fact" and CAUSAL.search(claim.text):
         return checked, f"causal wording on a {checked.truth}: these numbers describe co-movement, not causes"
     return checked, None
+
+
+def evidence_problem(claim: AgentClaim, facts: TraceFacts, existing: set[str]) -> str | None:
+    """Why the claim is not backed by its evidence (refs in the database, then the trace), or None."""
+    if not claim.evidence:
+        return "no evidence ref"
+    missing = [ref for ref in claim.evidence if ref not in existing]
+    if missing:
+        return f"evidence not in the database: {', '.join(missing)}"
+    keys = {split_ref(ref)[1] for ref in claim.evidence}
+    if not facts.about(keys):
+        return f"no tool result is about {', '.join(claim.evidence)}"
+    unsupported = facts.unsupported_for(claim.text, keys)
+    if unsupported:
+        return f"number not found in a tool result about its evidence: {', '.join(map(str, unsupported))}"
+    return None
 
 
 def lower_truth(claim: AgentClaim, facts: TraceFacts) -> AgentClaim:
