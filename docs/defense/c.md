@@ -201,6 +201,9 @@ look at the k pairs the model is surest about, how many are right?".
 - *Isn't the 0.57 inflated by the same-window features?* Partly, yes (see Limits). The split guarantees that
   nothing from the test period is used in training; it does not make the features independent of the label
   inside a window.
+- *And two runs at the same time?* The query writes a lock node first (`MlWriteLock`, unique name). The second
+  run waits on it until the first commits, then deletes what the first wrote: one set of links, never both. Without
+  it, 3 runs at once left duplicates in 8 rounds out of 10. The lock is deleted at the end of the same transaction.
 - *What if the write crashes halfway?* Nothing changes. The delete and the creates are one Cypher statement, so
   one transaction: Neo4j applies all of it or none of it. The first version used batches and could leave the
   graph with half of the new predictions; Eliott caught it in review.
