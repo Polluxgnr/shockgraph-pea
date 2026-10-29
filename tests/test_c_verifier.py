@@ -96,18 +96,18 @@ def test_a_supported_claim_is_kept_unchanged():
 
 
 @pytest.mark.parametrize(
-    "text",
+    ("text", "isin"),
     [
-        "A +20 % Brent shock gives Petrolia +12.4 %.",  # the shock size comes from the tool arguments
-        "AeroLys falls 8.2 % in that scenario.",  # no sign written: the size is compared
-        "AeroLys: −0.41 beta to Brent.",  # Unicode minus
-        "Petrolia beta 0,62.",  # French decimal comma
-        "Two companies have an oil beta above r2 0.1.",  # words are not numbers; 0.1 is an argument
+        ("A +20 % Brent shock gives Petrolia +12.4 %.", PETROLIA),  # the shock size comes from the arguments
+        ("AeroLys falls 8.2 % in that scenario.", AEROLYS),  # no sign written: the size is compared
+        ("AeroLys: −0.41 beta to Brent.", AEROLYS),  # Unicode minus
+        ("Petrolia beta 0,62.", PETROLIA),  # French decimal comma
+        ("Two companies have an oil beta above r2 0.1.", PETROLIA),  # 2 is the list length; 0.1 an argument
     ],
 )
-def test_rounding_signs_and_formats_are_accepted(text):
+def test_rounding_signs_and_formats_are_accepted(text, isin):
     """What a writer may legitimately do with a number the tool returned."""
-    result = verify(claim(text, "estimate", f"Company:{PETROLIA}", "Factor:BRENT"))
+    result = verify(claim(text, "estimate", f"Company:{isin}", "Factor:BRENT"))
     assert len(result.claims) == 1, result.removed_claims
 
 
@@ -129,6 +129,34 @@ def test_an_invented_number_is_removed_and_the_prose_rebuilt():
     assert result.removed_claims[0].text == invented.text
     assert "0.85" in result.removed_claims[0].reason
     assert result.answer == good.text
+
+
+def test_a_number_of_another_company_does_not_support_the_claim():
+    """0.62 is Petrolia's beta, not AeroLys's: citing AeroLys and Brent is not enough, the claim goes."""
+    stolen = claim("AeroLys has a beta of 0.62 to Brent.", "estimate", f"Company:{AEROLYS}", "Factor:BRENT")
+    result = verify(stolen, trace=[EXPOSED])
+    assert result.claims == []
+    assert "0.62" in result.removed_claims[0].reason
+    same_row = claim("Petrolia has a beta of 0.62 to Brent.", "estimate", f"Company:{PETROLIA}", "Factor:BRENT")
+    assert verify(same_row, trace=[EXPOSED]).claims == [same_row]
+
+
+def test_a_shock_impact_belongs_to_its_line():
+    """+12.4 % is Petrolia's line of the shock: it cannot be AeroLys's impact."""
+    result = verify(claim("AeroLys gains 12.4 % if Brent rises 20 %.", "estimate", f"Company:{AEROLYS}",
+                          "Factor:BRENT"), trace=[SHOCK])  # fmt: skip
+    assert result.claims == [] and "12.4" in result.removed_claims[0].reason
+
+
+def test_a_row_without_company_must_share_a_code_with_the_evidence():
+    """A factor line (no ISIN) supports a claim on that factor, not one on another factor."""
+    xray = ToolCall(
+        tool="portfolio_xray",
+        args={"positions": [{"isin": PETROLIA, "amount_eur": 650}]},
+        result={"total_eur": 650, "factors": [{"factor_code": "BRENT", "weighted_beta": 0.62, "covered_weight": 1}]},
+    )
+    assert verify(claim("Weighted beta to Brent: 0.62.", "estimate", "Factor:BRENT"), trace=[xray]).claims
+    assert not verify(claim("Weighted beta to EUR/USD: 0.62.", "estimate", "Factor:EURUSD"), trace=[xray]).claims
 
 
 def test_a_wrong_sign_is_an_unsupported_number():

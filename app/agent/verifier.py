@@ -4,8 +4,11 @@ The writer (a language model) turns tool results into claims. This module checks
 trace and the database, with rules and no model:
 
 1. every evidence ref (`Company:FR...`, `Factor:BRENT`, `Claim:c1`) exists in the database;
-2. every number of the claim appears in a tool result or a tool argument of the trace (rounding allowed:
-   "0.62" matches 0.6213, "48 %" matches 0.48);
+2. every number of the claim appears in the trace, in the right place (rounding allowed: "0.62" matches 0.6213,
+   "48 %" matches 0.48). A number from a result row that names companies (`isin`, `company_isin`...) only
+   supports a claim citing one of those companies: Petrolia's beta never backs a claim about AeroLys. A row
+   without a company must share a code with the evidence (`factor_code`, `claim_id`, or the call's arguments).
+   The arguments themselves (the scenario: "+20 %") and the length of a returned list support any claim;
 3. the truth level is not stronger than its source: a number takes the level of the result it comes from
    (a beta is an `estimate`), a news Claim is at most a `hypothesis`. A claim stated too strongly is lowered;
 4. an estimate, a prediction or a hypothesis never uses causal wording ("because", "à cause de"): those
@@ -70,6 +73,9 @@ ADVICE = re.compile(
 
 NOTHING_VERIFIED = "I could not verify any statement against the data the tools returned."
 
+# Fields that name the object a row is about. Any field ending in "isin" names a company or a fund.
+CODE_FIELDS = ("code", "factor_code", "claim_id")
+
 
 @dataclass(frozen=True)
 class Number:
@@ -110,12 +116,38 @@ def matches(number: Number, values: list[float]) -> bool:
     return False
 
 
+@dataclass(frozen=True)
+class Source:
+    """The numbers one result object holds itself, and what it is about.
+
+    `isins`: the companies it names, its own or its nearest parent's. `codes`: the factor codes and claim ids of
+    the object and its parents, plus every key of the call's arguments.
+    """
+
+    numbers: tuple[float, ...]
+    isins: frozenset[str]
+    codes: frozenset[str]
+
+    def supports(self, number: "Number", keys: set[str]) -> bool:
+        """True when the object holds the number and is about one of the claim's evidence keys."""
+        if not matches(number, list(self.numbers)):
+            return False
+        if self.isins:
+            return bool(self.isins & keys)
+        return not self.codes or bool(self.codes & keys)
+
+
 @dataclass
 class TraceFacts:
-    """What the trace supports: every number it contains, and every result object (dict) it returned."""
+    """What the trace supports: every number it contains, and every result object (dict) it returned.
+
+    `numbers` checks the prose; `free` (arguments, list lengths) and `sources` (result objects) check a claim.
+    """
 
     numbers: list[float] = field(default_factory=list)
     objects: list[dict] = field(default_factory=list)
+    free: list[float] = field(default_factory=list)
+    sources: list[Source] = field(default_factory=list)
 
     @classmethod
     def from_answer(cls, answer: AgentAnswer) -> "TraceFacts":
@@ -123,9 +155,37 @@ class TraceFacts:
         facts = cls()
         for call in answer.trace:
             if not call.error:
+                result = _full_result(call)
                 facts.collect(call.args)
-                facts.collect(_full_result(call))
+                facts.collect(result)
+                facts.free += _free_numbers(call.args)
+                facts.bind(result, frozenset(), frozenset(_keys_in(call.args)))
         return facts
+
+    def bind(self, value: Any, isins: frozenset[str], codes: frozenset[str]) -> None:
+        """Walk a result: each object becomes a Source, inheriting what its parents are about."""
+        if isinstance(value, dict):
+            own_isins, own_codes = _identity(value)
+            isins = frozenset(own_isins) or isins
+            codes = codes | own_codes
+            self.sources.append(Source(tuple(_held_numbers(value)), isins, codes))
+            for item in value.values():
+                if isinstance(item, (dict, list, tuple)):
+                    self.bind(item, isins, codes)
+        elif isinstance(value, (list, tuple)):
+            self.free.append(float(len(value)))
+            for item in value:
+                self.bind(item, isins, codes)
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            self.free.append(float(value))  # a bare number, outside any object
+
+    def unsupported_for(self, text: str, keys: set[str]) -> list[Number]:
+        """Numbers of a claim that neither the arguments nor a result object about its evidence support."""
+        return [
+            number
+            for number in numbers_in(text)
+            if not matches(number, self.free) and not any(source.supports(number, keys) for source in self.sources)
+        ]
 
     def collect(self, value: Any) -> None:
         """Walk a JSON-like value: numbers (and numbers inside strings) are kept, dicts are kept as sources."""
@@ -166,6 +226,40 @@ class TraceFacts:
             return min(levels, key=TRUTH_STRENGTH.__getitem__) if levels else None
         levels = [level for item in related for level in _levels(item)]
         return max(levels, key=TRUTH_STRENGTH.__getitem__) if levels else None
+
+
+def _identity(item: dict) -> tuple[set[str], set[str]]:
+    """(companies, codes) an object names directly."""
+    isins = {value for key, value in item.items() if key.endswith("isin") and isinstance(value, str)}
+    codes = {item[key] for key in CODE_FIELDS if isinstance(item.get(key), str)}
+    return isins, codes
+
+
+def _held_numbers(item: dict) -> list[float]:
+    """Numbers an object holds itself: its numeric fields and the numbers written in its text fields."""
+    held = _own_numbers(item)
+    for value in item.values():
+        if isinstance(value, str):
+            held += [number.value for number in numbers_in(value)]
+    return held
+
+
+def _free_numbers(value: Any) -> list[float]:
+    """Every number of the arguments: the scenario the user asked for supports any claim."""
+    facts = TraceFacts()
+    facts.collect(value)
+    return facts.numbers
+
+
+def _keys_in(value: Any) -> set[str]:
+    """Every text value of the arguments (ISINs, factor codes): what the call was about."""
+    if isinstance(value, str):
+        return {value}
+    if isinstance(value, dict):
+        return set().union(*(_keys_in(item) for item in value.values()))
+    if isinstance(value, (list, tuple)):
+        return set().union(*(_keys_in(item) for item in value))
+    return set()
 
 
 def _texts(item: dict) -> set[str]:
@@ -260,9 +354,10 @@ def check_claim(claim: AgentClaim, facts: TraceFacts, existing: set[str]) -> tup
     missing = [ref for ref in claim.evidence if ref not in existing]
     if missing:
         return claim, f"evidence not in the database: {', '.join(missing)}"
-    unsupported = facts.unsupported(claim.text)
+    keys = {split_ref(ref)[1] for ref in claim.evidence}
+    unsupported = facts.unsupported_for(claim.text, keys)
     if unsupported:
-        return claim, f"number not found in any tool result: {', '.join(map(str, unsupported))}"
+        return claim, f"number not found in a tool result about its evidence: {', '.join(map(str, unsupported))}"
     if ADVICE.search(claim.text):
         return claim, "buy or sell wording: the app explains exposures, it never advises"
     checked = lower_truth(claim, facts)
