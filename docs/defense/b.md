@@ -107,3 +107,18 @@ Updated at the end of every session. See the end of docs/roles/b.md for the ques
   and restart the service. Confirm the node/relationship counts and constraints before the demo. Never
   import an unverified archive directly over the only copy of the local database. No `.dump` archive was
   present in the repository on 2026-10-28, so no import was attempted.
+
+## B6 — Performance
+
+- The dedicated loader generated 20,000 companies, 100,000 sensitivities, 200,000 correlations and 50
+  funds on port 7689 only. It batches writes to limit client memory.
+- Fifty service measurements after three warm-ups produced the p50/p95 figures in `docs/perf.md`. Dropping
+  and recreating `company_ticker` changed the lookup from `NodeByLabelScan` / 40,002 hits to
+  `NodeIndexSeek` / 3 hits. EXPLAIN and PROFILE operator lists are emitted in the JSON report.
+- The page-200 result is nuanced: the market-cap index reduced `SKIP` to 8,003 hits, while the current
+  cursor's `OR` compiled to a `Union` costing 32,042 hits. The cursor remains stable under insertions but
+  needs a range-friendly rewrite before claiming a latency advantage.
+- Dropping `sensitive_r2` did not change the exposed plan or its 50,004 hits because the unique factor seek
+  plus relationship expansion won the planner cost model. The report preserves this negative measurement.
+- Bounded `*..6` stopped at 2,245 hits for a target beyond six hops; unbounded shortest path used 4,300.
+  Server milliseconds are cache-sensitive, so plan shape and DB hits are the more defensible comparison.

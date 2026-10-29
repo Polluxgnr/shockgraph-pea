@@ -14,3 +14,5 @@ One line per decision not settled by AGENTS.md: date, decision, why.
   prevents Nginx from serving a partially initialized analytical stack.
 - 2026-10-28: Neo4j's health-check secret uses `HEALTHCHECK_PASSWORD`, because the image interprets every
   `NEO4J_*` environment variable as a database configuration key under strict validation.
+- 2026-10-28: benchmark loaders hard-fail outside port 7689; this prevents destructive synthetic loading
+  into the test or development graph.
