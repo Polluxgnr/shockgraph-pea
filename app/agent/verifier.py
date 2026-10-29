@@ -13,7 +13,12 @@ trace and the database, with rules and no model:
    (a beta is an `estimate`), a news Claim is at most a `hypothesis`. A claim stated too strongly is lowered;
 4. an estimate, a prediction or a hypothesis never uses causal wording ("because", "à cause de"): those
    numbers describe co-movement, not causes;
-5. no buy or sell wording, whatever the level.
+5. no investment advice, whatever the level. Two layers: fixed phrases (instant, always on), then the agent's
+   local model (qwen2.5:7b) that reads each remaining claim against a written policy, the legal definition of advice
+   (MiFID II / AMF: a recommendation to buy, sell, hold... a specific instrument, or presented as suitable for
+   the reader). A list of phrases can never be complete; the judge catches the indirect forms ("a good fit for
+   your PEA"). The judge can only remove a claim, never add or change one, and it sees one sentence, not the
+   conversation. Without a model (tests, CI, Ollama down) the phrases still apply.
 
 A claim must also be about something the trace returned: one result object (with what its call was asked)
 names every key of its evidence. "AeroLys produces Brent" with nothing about AeroLys and Brent in the trace goes.
@@ -30,7 +35,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from app.config import Settings, get_settings
 from app.database.neo4j import Neo4jClient
+from app.llm.client import get_chat_model
 from app.models.agent import AgentAnswer, AgentClaim
 
 # Strongest first: a claim may be stated as weakly as its sources, never more strongly.
@@ -83,6 +92,30 @@ ADVICE = re.compile(
 )
 
 NOTHING_VERIFIED = "I could not verify any statement against the data the tools returned."
+
+# The policy of the advice judge: the legal definition of investment advice (MiFID II art. 4(4), delegated
+# regulation 2017/565 art. 9, as the AMF applies it), written for a small local model. The examples here are not in the
+# labelled set of ml/advice_eval.py, so the measure there is not inflated.
+ADVICE_POLICY = """You check ONE sentence written by ShockGraph PEA, a tool that explains how stocks and ETFs \
+are exposed to commodities, currencies and interest rates. The tool must never give investment advice.
+
+ADVICE: the sentence recommends, suggests or encourages the reader to buy, sell, hold, keep, subscribe to, \
+increase, reduce, switch or avoid a specific stock, fund or asset; or says one is a good or bad choice, an \
+opportunity, or suitable for the reader; or proposes how to split a portfolio. Polite or indirect forms count \
+("it may be wise to", "worth a look", "il serait judicieux de", "à privilégier").
+
+SAFE: the sentence only describes exposures, betas, correlations, simulated impacts, predictions, what a company \
+produces, buys or sells, what a fund holds, or past moves, without telling the reader what to do. Saying that \
+the tool gives no advice is SAFE.
+
+Examples:
+"Shell has a beta of 0.7 to Brent." -> SAFE
+"Shell looks like a smart pick for your account." -> ADVICE
+"Volkswagen consomme du cuivre." -> SAFE
+"Mieux vaut sortir de Volkswagen avant la hausse du cuivre." -> ADVICE
+
+Answer with exactly one word: ADVICE or SAFE."""
+JUDGE_REASON = "the advice judge read it as a recommendation to buy, sell or hold: the app never advises"
 
 # Fields that name the object a row is about. Any field ending in "isin" names a company or a fund.
 CODE_FIELDS = ("code", "factor_code", "claim_id")
@@ -337,6 +370,7 @@ class AnswerVerifier:
 
     def __init__(self, client: Neo4jClient) -> None:
         self.client = client
+        self.judge = AdviceJudge.from_settings(get_settings())
 
     def verify(self, answer: AgentAnswer) -> AgentAnswer:
         """Return a copy of the answer with unsupported claims removed."""
@@ -354,6 +388,10 @@ class AnswerVerifier:
                 removed.append(claim.model_copy(update={"reason": reason}))
             else:
                 kept.append(checked)
+        if kept and self.judge:
+            verdicts = self.judge.advice([claim.text for claim in kept])
+            removed += [claim.model_copy(update={"reason": JUDGE_REASON}) for claim, bad in zip(kept, verdicts) if bad]
+            kept = [claim for claim, bad in zip(kept, verdicts) if not bad]
         text = " ".join(claim.text for claim in kept) or NOTHING_VERIFIED
         return answer.model_copy(update={"answer": text, "claims": kept, "removed_claims": removed})
 
@@ -369,6 +407,44 @@ class AnswerVerifier:
             rows = self.client.read(EXISTING[label], {"keys": sorted(wanted), "limit": len(wanted)})
             found |= {f"{label}:{row['key']}" for row in rows}
         return found
+
+
+class AdviceJudge:
+    """The agent's large model (qwen2.5:7b) tells whether a sentence is investment advice (ADVICE_POLICY).
+
+    Large, not small: on claims in the writer's own format, qwen2.5:3b flagged 2 of 10 plain impacts as advice
+    ("TotalEnergies would move +10.92 %"), the 7B none; the 7B is also already loaded for the planner.
+
+    One call per sentence, all sent together (`batch`). A verdict is True (advice), False (safe) or None when
+    the model did not answer ADVICE or SAFE or could not be reached: None leaves the decision to the phrases.
+    """
+
+    def __init__(self, model) -> None:
+        self.model = model
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> "AdviceJudge | None":
+        """The judge on the large model; None when there is no chat model yet (C4 not merged)."""
+        try:
+            return cls(get_chat_model(settings, "large"))
+        except NotImplementedError:
+            return None
+
+    def advice(self, texts: list[str]) -> list[bool | None]:
+        """One verdict per sentence."""
+        prompts = [[SystemMessage(ADVICE_POLICY), HumanMessage(f"Sentence: {text}")] for text in texts]
+        try:
+            replies = self.model.batch(prompts)
+        except Exception:  # pylint: disable=broad-exception-caught
+            return [None] * len(texts)  # Ollama down or broken: the phrases still apply
+        return [read_verdict(reply.content) for reply in replies]
+
+
+def read_verdict(reply: Any) -> bool | None:
+    """'ADVICE' -> True, 'SAFE' -> False (first word, any case), anything else -> None."""
+    words = re.findall(r"[A-Za-z]+", str(reply))
+    first = words[0].upper() if words else ""
+    return {"ADVICE": True, "SAFE": False}.get(first)
 
 
 def check_claim(claim: AgentClaim, facts: TraceFacts, existing: set[str]) -> tuple[AgentClaim, str | None]:

@@ -5,8 +5,20 @@ import re
 
 import pytest
 
-from app.agent.verifier import NOTHING_VERIFIED, AnswerVerifier, TraceFacts, numbers_in
+from langchain_core.messages import AIMessage
+
+from app.agent.verifier import (
+    ADVICE_POLICY,
+    NOTHING_VERIFIED,
+    AdviceJudge,
+    AnswerVerifier,
+    TraceFacts,
+    numbers_in,
+    read_verdict,
+)
+from app.config import Settings
 from app.models.agent import AgentAnswer, AgentClaim, ToolCall
+from ml.advice_eval import ADVICE_SET, rates, rule_flags
 
 PETROLIA, AEROLYS, AUTOROUTE, CUPRUM = "FRTEST000011", "FRTEST000029", "DETEST000060", "DETEST000078"
 
@@ -369,3 +381,94 @@ def test_existing_refs_on_the_mini_graph(neo4j_client):
         "Company:XX0000000000",
     }
     assert AnswerVerifier(neo4j_client).existing_refs(refs) == refs - {"Company:XX0000000000"}
+
+
+# --- the advice judge ---------------------------------------------------------------------------------
+
+
+class FakeJudgeModel:
+    """Chat model stand-in for the judge: answers from `replies` (sentence -> text), records what it read."""
+
+    def __init__(self, replies: dict[str, str] | None = None, broken: bool = False) -> None:
+        self.replies = replies or {}
+        self.broken = broken
+        self.read: list[str] = []
+
+    def batch(self, prompts: list) -> list:
+        """One reply per prompt, keyed on the sentence; 'SAFE' when not listed."""
+        if self.broken:
+            raise ConnectionError("Ollama is not running")
+        sentences = [prompt[-1].content.removeprefix("Sentence: ") for prompt in prompts]
+        self.read += sentences
+        return [AIMessage(content=self.replies.get(sentence, "SAFE")) for sentence in sentences]
+
+
+def judged(model: FakeJudgeModel, *claims: AgentClaim) -> AgentAnswer:
+    """Verify with the judge on `model`."""
+    verifier = AnswerVerifier(KnownRefs())
+    verifier.judge = AdviceJudge(model)
+    return verifier.verify(AgentAnswer(answer="", claims=list(claims), trace=[EXPOSED, EXPOSURES, SHOCK]))
+
+
+def test_the_judge_removes_advice_the_phrases_miss():
+    """'A good fit for your PEA' has no buy or sell: the phrases keep it, the judge removes it."""
+    advice = claim("Petrolia (beta 0.62 to Brent) is a good fit for your PEA.", "estimate", f"Company:{PETROLIA}")
+    fact = claim("Petrolia produces Brent.", "fact", f"Company:{PETROLIA}", "Factor:BRENT")
+    result = judged(FakeJudgeModel({advice.text: "ADVICE"}), advice, fact)
+    assert result.claims == [fact]
+    assert result.removed_claims[0].text == advice.text and "advice judge" in result.removed_claims[0].reason
+    assert result.answer == fact.text
+
+
+def test_the_judge_only_reads_claims_the_rules_kept_and_never_brings_one_back():
+    """An invented number is removed by the rules: the judge never sees it, and its SAFE cannot restore it."""
+    invented = claim("AeroLys has a beta of 0.85 to Brent.", "estimate", f"Company:{AEROLYS}", "Factor:BRENT")
+    good = claim("Petrolia's beta to Brent is 0.62.", "estimate", f"Company:{PETROLIA}", "Factor:BRENT")
+    model = FakeJudgeModel()
+    result = judged(model, invented, good)
+    assert model.read == [good.text]
+    assert result.claims == [good] and result.removed_claims[0].text == invented.text
+
+
+def test_without_a_judge_verdict_the_phrases_decide():
+    """Ollama down, or a reply that is neither ADVICE nor SAFE: the claims are judged by the phrases only."""
+    good = claim("Petrolia's beta to Brent is 0.62.", "estimate", f"Company:{PETROLIA}", "Factor:BRENT")
+    phrased = claim("Beta 0.62: you should buy Petrolia now.", "estimate", f"Company:{PETROLIA}")
+    for model in (FakeJudgeModel(broken=True), FakeJudgeModel({good.text: "Maybe."})):
+        result = judged(model, good, phrased)
+        assert result.claims == [good] and "never advises" in result.removed_claims[0].reason
+
+
+@pytest.mark.parametrize(
+    ("reply", "verdict"),
+    [("ADVICE", True), ("advice.", True), ("SAFE", False), (" Safe - only a beta", False), ("", None), ("Yes", None)],
+)
+def test_the_verdict_is_the_first_word(reply, verdict):
+    """Small models add punctuation or a reason: only the first word counts."""
+    assert read_verdict(reply) is verdict
+
+
+def test_no_judge_until_there_is_a_chat_model(monkeypatch):
+    """While get_chat_model is not written (C4), the verifier runs on the phrases alone."""
+
+    def not_written(*_args):
+        raise NotImplementedError("C4: get_chat_model")
+
+    monkeypatch.setattr("app.agent.verifier.get_chat_model", not_written)
+    assert AdviceJudge.from_settings(Settings()) is None
+
+
+def test_the_labelled_set_is_balanced_and_unseen_by_the_judge():
+    """20 advice, 20 descriptions, English and French, none of them an example of the judge's prompt."""
+    labels = [label for _, label in ADVICE_SET]
+    assert labels.count(True) == labels.count(False) == 20
+    assert not [text for text, _ in ADVICE_SET if text in ADVICE_POLICY]
+    assert rates([True, True, False, False], [True, False, True, False]) == {"recall": 0.5, "false_alarms": 0.5}
+
+
+def test_the_phrases_alone_miss_indirect_advice():
+    """Why the judge exists: on the labelled set the phrases miss advice and remove a description."""
+    texts, labels = [text for text, _ in ADVICE_SET], [label for _, label in ADVICE_SET]
+    result = rates(labels, rule_flags(texts))
+    assert result["recall"] < 0.8
+    assert rule_flags(["Je ne peux pas vous dire s'il faut acheter ou vendre."]) == [True]  # a false alarm
