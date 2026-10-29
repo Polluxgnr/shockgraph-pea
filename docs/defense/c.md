@@ -149,7 +149,10 @@ stays a fact even if Petrolia's Brent beta (an estimate) is also in the trace.
 
 | Choice | Rejected | Why |
 | --- | --- | --- |
-| Rules | A second model as a judge | A model can be argued into agreeing; a number comparison cannot. Rules are also instant and testable |
+| Rules for refs, numbers and truth levels | A second model as a judge | A model can be argued into agreeing; a number comparison cannot. Rules are also instant and testable |
+| A model judge for advice, on top of the phrases | Keep growing the phrase list | Measured on 40 labelled sentences: the phrases catch 15 % of the advice, the qwen2.5:7b judge 100 %. Advice is a meaning ("a good fit for your PEA"), not a word. This is how guardrail tools do it (Llama Guard, NeMo self-check, Coralogix policies) |
+| The 7B as judge | The 3B (faster) | The 3B caught 85 % and flagged 2 of 10 plain impact claims as advice, including the TotalEnergies one shown in the demo; the 7B none, and it is already loaded |
+| The judge can only remove | Let it rewrite or restore | It sees one sentence, not the conversation, and its SAFE never brings back a claim the rules removed |
 | Lower a truth level that is too strong | Remove the claim | The statement is true, only its label is wrong: lowering keeps the information and fixes the label |
 | Remove causal claims | Rewrite them ("moved with") | A rewrite by rule breaks sentences in two languages; removing is safe and the reason is shown |
 | Always show the kept claims, not the prose | Keep the writer's prose when nothing was removed | The prose cannot be tied to refs: it could give Petrolia's 0.62 to AeroLys while every claim is right |
@@ -162,7 +165,10 @@ stays a fact even if Petrolia's Brent beta (an estimate) is also in the trace.
 - A row is matched by its ISIN and codes, not by the meaning of the field: a claim calling Petrolia's r2 its
   beta (both on the same row) passes. The first version was weaker: any 0.62 in the trace supported any
   claim; Eliott found it in review and the number is now tied to its row.
-- Causal and advice wording is a list of phrases (English and French). An unusual phrasing can get through.
+- Causal wording is still a list of phrases (English and French): an unusual phrasing can get through.
+- The advice judge is measured on 40 sentences we wrote ourselves: 100 % is on that set, not a guarantee.
+  It also removed one description ("Je ne peux pas vous dire s'il faut acheter ou vendre"), so 5 % false
+  alarms. Without Ollama (CI, tests) only the phrases run, and they catch 15 %.
 - The verifier checks claims, not omissions: an answer that leaves out the most exposed company is not
   caught.
 
@@ -175,5 +181,13 @@ stays a fact even if Petrolia's Brent beta (an estimate) is also in the trace.
   is a estimate: lowered" (test `test_a_beta_stated_as_a_fact_is_lowered_to_an_estimate`).
 - *Why is "because" forbidden?* A beta measures how two prices moved together. Saying one *causes* the other
   is a claim the data cannot support (oil and airlines can both react to the economy).
-- *Does the verifier slow the agent down?* One existence query per label (a few index seeks) and a walk
-  through the trace in Python: milliseconds, next to seconds for the model.
+- *Does the verifier slow the agent down?* The rules: one existence query per label (a few index seeks) and
+  a walk through the trace in Python, milliseconds. The advice judge: one short model call per kept claim,
+  about 2 s each on a CPU (at most 4 claims), faster on a GPU.
+- *How do you know the advice judge works?* `python -m ml.advice_eval`: 40 labelled sentences, English and
+  French, half advice and half description, with the hard cases (advice without "buy", descriptions with
+  "sells"). None of them is an example inside the judge's prompt. Phrases: 15 % caught. 3B: 85 %. 7B: 100 %,
+  5 % false alarms.
+- *Where does the policy come from?* The legal definition of investment advice (MiFID II, as the AMF applies
+  it): a recommendation to buy, sell or hold a specific instrument, or presenting one as suitable for the
+  reader. Describing an exposure is not advice; telling the reader what to do with it is.
