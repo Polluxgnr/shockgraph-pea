@@ -169,6 +169,8 @@ look at the k pairs the model is surest about, how many are right?".
 | Gradient boosting (chosen on held-out companies) | Logistic regression | Same AUC-PR (0.573 vs 0.572), but boosting is better at the top of the list (precision@100 1.00 vs 0.94) |
 | Write only prob >= 0.5 and only where no SENSITIVE_TO exists | Write every score | The graph keeps one statement per pair: an estimate when the prices show it, a prediction otherwise |
 | `direction` from the peers' mean beta | A second model for the sign | The model says whether; the peers already say which way, and it stays explainable |
+| Replace the predictions in one statement (one transaction) | Delete, then write in batches | Batches are separate transactions: a crash in the middle deleted the old predictions and left a part of the new ones. Now a failure keeps the old ones (a test breaks the second row on purpose) |
+| Validation split checked for both classes, up to 20 tries | The first random split | With few exposed companies, the held-out quarter can hold none of them: AUC-PR is then undefined. Same seed, so the same data gives the same split |
 
 ### Cost
 
@@ -199,5 +201,8 @@ look at the k pairs the model is surest about, how many are right?".
 - *Isn't the 0.57 inflated by the same-window features?* Partly, yes (see Limits). The split guarantees that
   nothing from the test period is used in training; it does not make the features independent of the label
   inside a window.
+- *What if the write crashes halfway?* Nothing changes. The delete and the creates are one Cypher statement, so
+  one transaction: Neo4j applies all of it or none of it. The first version used batches and could leave the
+  graph with half of the new predictions; Eliott caught it in review.
 - *Why GDS again inside the ML code?* C2 writes communities and embeddings for the current window only. The
   older window needs its own, computed the same way, so the comparison between windows is fair.
