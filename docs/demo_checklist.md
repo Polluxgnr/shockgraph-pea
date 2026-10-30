@@ -24,7 +24,7 @@ The video walks through this table from top to bottom.
 | 2 | WITH, UNWIND, subqueries, aggregations | `app/services/portfolio.py`, `shocks.py` | B | [x] |
 | 5 | Optimisation + benchmarks | `docs/perf.md` | B | [x] |
 | 2 | GDS projection + ≥ 2 algorithms | Louvain, PageRank, FastRP in `app/services/gds.py` | C | [x] |
-| 3 | ML workflow | `ml/`, `docs/ml_report.md` | C | [ ] |
+| 3 | ML workflow | `ml/`, `docs/ml_report.md` | C | [x] |
 | 4 | LangGraph agent with tools | `app/agent/` | C | [x] |
 | 4 | LLM reliability and guardrails | `app/agent/guardrails.py`, `verifier.py`, `docs/guardrails.md`, `docs/agent_eval.md` | A, C, B | [ ] |
 | 2 | Graph schema diagram | `docs/schema.drawio`, `docs/img/a_schema.png` | A | [x] |

@@ -46,13 +46,14 @@ Requirements: Docker Desktop (8 GB RAM or more for the local LLM), Python 3.11+,
 ```bash
 git clone https://github.com/Polluxgnr/shockgraph-pea.git && cd shockgraph-pea
 make env install        # .env from .env.example (edit the passwords) + .venv + git hooks
-make docker-run         # nginx :80 -> api -> neo4j + gds, ollama; waits for every health check
+make docker-run         # nginx :80 -> api -> neo4j + gds, ollama (each starts once the one it needs is healthy)
 make llm-pull           # once: qwen2.5 7b and 3b for the agent (~7 GB)
 make seed               # real data: about 3 minutes with warm caches (first OpenFIGI pass ~55 min without a key)
 make gds                # communities, PageRank and embeddings
 ```
 
-Swagger: http://localhost/docs · Neo4j browser: http://localhost:7474 · `make help` lists every command.
+`docker compose ps` shows the health of the 4 services. Swagger: http://localhost/docs · Neo4j browser:
+http://localhost:7474 · `make help` lists every command.
 
 The API image is also published: `docker pull ghcr.io/polluxgnr/shockgraph-api:latest`.
 
@@ -68,7 +69,7 @@ memory and never stored. Details: [`docs/architecture.md`](docs/architecture.md)
 
 ![Graph schema](docs/img/a_schema.png)
 
-9 labels, 15 relationship types, 10 uniqueness constraints, 6 range indexes (one on a relationship property),
+9 labels, 15 relationship types, 11 uniqueness constraints (two on technical lock nodes), 6 range indexes (one on a relationship property),
 3 full-text indexes. The full
 contract is [`docs/schema.md`](docs/schema.md); why each node and relationship exists, and the alternatives we
 rejected, are in [`docs/modeling.md`](docs/modeling.md).
@@ -78,8 +79,8 @@ rejected, are in [`docs/modeling.md`](docs/modeling.md).
 | Truth | Example | Where it comes from |
 | --- | --- | --- |
 | `fact` | Norsk Hydro `PRODUCES` aluminium; Airlines `CONSUMES` jet fuel | Wikidata, issuer documents, our justified industry map |
-| `estimate` | TotalEnergies `SENSITIVE_TO` Brent, beta 0.4, partial r² 0.3 | Regression on weekly prices (past behaviour, with its r² and window) |
-| `prediction` | `PREDICTED_SENSITIVITY` for a company with too little price history | ML model on the company's position in the graph |
+| `estimate` | TotalEnergies `SENSITIVE_TO` Brent, beta 0.39, partial r² 0.44 | Regression on weekly prices (past behaviour, with its r² and window) |
+| `prediction` | `PREDICTED_SENSITIVITY` where prices show no significant beta | ML model reading the company's position in the graph (probability ≥ 0.5) |
 | `hypothesis` | `Claim` "A supplies B" extracted from two news headlines | Local LLM on headlines, confidence from distinct stories and publishers |
 
 **Why a graph database?** The core questions are multi-hop: fund → index → company → industry → commodity, or
@@ -169,7 +170,9 @@ alternatives we rejected and the questions we expect.
   the server refuses to write in, and a server-side timeout.
 - **Advice is refused by a rule, before any model call**: a prompt can talk a model into a recommendation, not a
   regular expression.
-- **A verifier removes any claim the trace does not support** (numbers, evidence references).
+- **A verifier checks every claim against the trace and the database**: each number tied to its row, evidence
+  references that exist, a truth level never stated more strongly than its source, no causal wording on an
+  estimate, and an advice judge (qwen2.5:7b against the MiFID II / AMF definition of investment advice).
 
 ## Results in numbers
 
@@ -179,16 +182,19 @@ alternatives we rejected and the questions we expect.
 | Ticker coverage | Yahoo symbol for 2,371 companies (96 %); CAC 40 resolved 40/40, Nasdaq-100 98/101 |
 | Declared exposures | 12 factors, 28 industry links, 58 company `PRODUCES` from Wikidata, 45 hand-checked company links |
 | News hypotheses | 2,727 headlines → 154 candidate pairs → 4 claims, all correct on reading, 1 confirmed |
+| Betas and correlations (C1) | 2,109 stocks with prices, 3,579 significant `SENSITIVE_TO`, 3,818 `CORRELATED_WITH` (weekly, 3 years) |
+| Network (C2) | 1,499 correlated stocks in 139 Louvain communities, PageRank and 64-d FastRP embeddings |
+| ML (C3, temporal split) | AUC-PR 0.573 for gradient boosting vs 0.270 for the industry-share baseline; precision@100 1.00; 676 predictions written ([`docs/ml_report.md`](docs/ml_report.md)) |
 | Index effect (20,000 companies) | ticker lookup 40,002 → 3 DB hits; `SKIP` page 200: 60,001 → 8,003 DB hits |
 | Cypher guardrail | 50 refused queries (each with its expected reason), 18 accepted (each `EXPLAIN`-ed on Neo4j) |
 | Agent evaluation | 30 questions including 10 traps (advice, writes, invented company, causation, out of scope): [`docs/agent_eval.md`](docs/agent_eval.md) |
-| Tests | 300+ tests, coverage ≥ 60 % enforced in CI, pylint 10/10 |
+| Tests | 350+ tests (unit, API, Neo4j + GDS, containers), coverage 82 % (≥ 60 % enforced in CI), pylint 10/10 |
 
 ## Limits
 
 Said plainly, because a model of the economy that hides its limits is worse than none.
 
-- **Betas describe the past.** A regression over two years says how a stock moved with oil, not how it will move;
+- **Betas describe the past.** A regression over three years says how a stock moved with oil, not how it will move;
   a low r² means "little evidence", and the API filters on it.
 - **Declared links have no size.** "Airlines consume jet fuel" has a direction but no number, so the shock shows it
   without a euro amount.
