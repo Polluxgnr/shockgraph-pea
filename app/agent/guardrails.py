@@ -43,7 +43,7 @@ WRITE_CLAUSES = [
     "DROP",
     "FOREACH",
     "LOAD CSV",
-    "IN TRANSACTIONS",
+    "TRANSACTIONS",  # IN TRANSACTIONS and IN CONCURRENT TRANSACTIONS
     "ALTER",
     "RENAME",
     "GRANT",
@@ -62,15 +62,22 @@ ALLOWED_PROCEDURES = [
 ]
 START_CLAUSES = ("MATCH", "OPTIONAL MATCH", "WITH", "UNWIND", "CALL", "RETURN")
 
-_STRING = re.compile(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"", re.S)
-_COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
+# Strings and comments in ONE left-to-right pass: whichever starts first wins, so the quote in `// it's` cannot
+# open a fake string that would hide the code after the comment.
+_STRING_OR_COMMENT = re.compile(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|//[^\n]*|/\*.*?\*/", re.S)
 _BACKTICK = re.compile(r"`([^`]*)`")
 # The innermost bracket: right after `-` it is a relationship (`-[r:X*..3]->`), otherwise a list or a comprehension.
 _INNER_BRACKET = re.compile(r"(-\s*)?\[([^\[\]]*)\]")
 _LABEL_USE = re.compile(r"(?:\b[A-Za-z_]\w*|\()\s*:\s*(!?[A-Za-z_]\w*(?:\s*[:&|]\s*!?[A-Za-z_]\w*)*)")
 # A quantifier after a node group `)` or, since Neo4j 5.9, right after a relationship (`]-`, `]->`, `-->`).
 _QUANTIFIER = re.compile(r"(?:\)|-|>)\s*(\+|\*|\{\s*(\d*)\s*,\s*(\d*)\s*\}|\{\s*(\d+)\s*\})")
-_CALL = re.compile(r"\bCALL\s+([A-Za-z_][\w.]*)\s*\(", re.I)
+# `CALL db.labels()` and also `CALL db.labels` (arguments taken implicitly from the parameters); a subquery
+# `CALL {` or `CALL (x) {` does not match.
+_CALL = re.compile(r"\bCALL\s+([A-Za-z_][\w.]*)", re.I)
+_UNION = re.compile(r"\bUNION(?:\s+ALL)?\b", re.I)
+_RETURN = re.compile(r"\bRETURN\b", re.I)
+# A label or type taken from an expression (`n:$($label)`, Neo4j 5.26): the allow-list could not check it.
+_DYNAMIC_LABEL = re.compile(r":\s*\$")
 _LIMIT = re.compile(r"\bLIMIT\b", re.I)
 # An integer literal followed by the end, `}`, `;`, UNION or the next clause: `LIMIT 10 + 100000` is refused.
 _STRICT_LIMIT = re.compile(
@@ -91,8 +98,7 @@ class ValidationResult:
 
 def sanitize(cypher: str) -> str:
     """Blank string literals, remove comments, unquote backtick identifiers, collapse whitespace."""
-    text = _STRING.sub("''", cypher)
-    text = _COMMENT.sub(" ", text)
+    text = _STRING_OR_COMMENT.sub(lambda match: "''" if match.group(0)[0] in "'\"" else " ", cypher)
     text = _BACKTICK.sub(lambda match: re.sub(r"\W", "_", match.group(1)), text)
     return re.sub(r"\s+", " ", text).strip()
 
@@ -158,6 +164,8 @@ class CypherValidator:
         # Innermost brackets first, until none is left: a list inside a relationship (`-[:X* {w: [1]}]-`) is gone
         # before the relationship is checked, and every character is checked exactly once.
         remaining, previous = _strip_map_keys(text), None
+        if _DYNAMIC_LABEL.search(remaining):
+            reasons.append("dynamic labels and relationship types are not allowed")
         while remaining != previous:
             previous, remaining = remaining, _INNER_BRACKET.sub(reduce, remaining)
         reasons += _check_labels_and_quantifiers(remaining)
@@ -165,18 +173,36 @@ class CypherValidator:
 
     @staticmethod
     def _limit(upper: str) -> list[str]:
-        """Every LIMIT is a single integer literal of at most MAX_LIMIT, and the final RETURN has one."""
-        last_return = upper.rfind("RETURN")
+        """Every LIMIT is a single integer literal of at most MAX_LIMIT, and the final RETURN has one.
+
+        "Final" is read at the top level only, and in every UNION branch: a LIMIT inside `COUNT { ... }` or in the
+        last branch of a UNION does not bound the rows of the outer query.
+        """
         reasons = []
-        if last_return < 0 or not _LIMIT.search(upper[last_return:]):
-            reasons.append(f"the final RETURN needs a LIMIT (at most {MAX_LIMIT})")
+        branches = _UNION.split(_top_level(upper))
+        for branch in branches:
+            returns = list(_RETURN.finditer(branch))
+            if not returns or not _LIMIT.search(branch[returns[-1].start() :]):
+                reasons.append(
+                    f"each UNION branch needs a LIMIT after its RETURN (at most {MAX_LIMIT})"
+                    if len(branches) > 1
+                    else f"the final RETURN needs a LIMIT (at most {MAX_LIMIT})"
+                )
         strict = {match.start(): int(match.group(1)) for match in _STRICT_LIMIT.finditer(upper)}
         for match in _LIMIT.finditer(upper):
             if match.start() not in strict:
                 reasons.append("LIMIT must be a single integer literal")
             elif strict[match.start()] > MAX_LIMIT:
                 reasons.append(f"LIMIT {strict[match.start()]} is above {MAX_LIMIT}")
-        return reasons
+        return sorted(set(reasons), key=reasons.index)
+
+
+def _top_level(text: str) -> str:
+    """The query with the inside of every `{...}` (subquery, map, quantifier) emptied, innermost first."""
+    previous = None
+    while text != previous:
+        previous, text = text, re.sub(r"\{[^{}]*\}", "{}", text)
+    return text
 
 
 def _has_word(upper: str, phrase: str) -> bool:

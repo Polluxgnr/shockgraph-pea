@@ -32,6 +32,11 @@ ACCEPTED = [
     # a predicate inside the relationship, and a list in a map projection (third review of #23)
     "MATCH (a:Company)-[r:SENSITIVE_TO WHERE r.r2 > 0.1]->(f:Factor) RETURN f.code LIMIT 5",
     "MATCH (c:Company) RETURN c {.name, sectors: [(c)-[:IN_INDUSTRY]->(i:Industry) | i.name]} AS row LIMIT 5",
+    # UNION with a LIMIT in every branch, a scoped CALL subquery, parameters in maps (fourth review of #23)
+    "MATCH (c:Company) RETURN c.name AS name LIMIT 5 UNION MATCH (f:Fund) RETURN f.name AS name LIMIT 5",
+    "MATCH (c:Company) CALL (c) { MATCH (c)-[:IN_INDUSTRY]->(i:Industry) RETURN i LIMIT 1 } "
+    "RETURN c.name, i.name LIMIT 5",
+    "MATCH (c:Company {isin: $isin}) RETURN c {.name, cap: $cap} AS row LIMIT 5",
 ]
 
 REFUSED = [
@@ -43,7 +48,7 @@ REFUSED = [
     ("DROP INDEX company_name_ft", "write clause DROP"),
     ("LOAD CSV FROM 'file:///x.csv' AS row RETURN row LIMIT 1", "write clause LOAD CSV"),
     ("MATCH (c:Company) FOREACH (x IN [1] | SET c.x = 1) RETURN c LIMIT 1", "write clause FOREACH"),
-    ("MATCH (c:Company) CALL { WITH c SET c.x = 1 } IN TRANSACTIONS RETURN c LIMIT 1", "IN TRANSACTIONS"),
+    ("MATCH (c:Company) CALL { WITH c SET c.x = 1 } IN TRANSACTIONS RETURN c LIMIT 1", "TRANSACTIONS"),
     ("MATCH (c:Company) RETURN c LIMIT 5; MATCH (n) DETACH DELETE n", "several statements"),
     ("CALL dbms.listConfig() YIELD name RETURN name LIMIT 5", "procedure dbms.listConfig"),
     ("CALL apoc.cypher.run('MATCH (n) DETACH DELETE n', {}) YIELD value RETURN value LIMIT 1", "apoc"),
@@ -88,6 +93,25 @@ REFUSED = [
     ("MATCH (c:Company) RETURN c.name, c:User AS flag LIMIT 5", "unknown label User"),
     ("MATCH (c:Company) RETURN [x IN [1, 2] WHERE x > 0 | c:User] AS flags LIMIT 5", "unknown label User"),
     ("MATCH (c:Company) RETURN [p = (c)-->{1,50}(b) | b] AS far LIMIT 5", "longer than 6"),
+    # a LIMIT only in the last UNION branch bounds that branch only (fourth review of #23)
+    (
+        "MATCH (c:Company) RETURN c.name AS name UNION MATCH (f:Fund) RETURN f.name AS name LIMIT 5",
+        "each UNION branch needs a LIMIT",
+    ),
+    (
+        "MATCH (c:Company) RETURN c.name AS name UNION ALL MATCH (f:Fund) RETURN f.name AS name LIMIT 1",
+        "each UNION branch needs a LIMIT",
+    ),
+    # found while hunting for more: a LIMIT inside COUNT { } is not the outer LIMIT
+    ("MATCH (c:Company) RETURN COUNT { MATCH (c)--(x) RETURN x LIMIT 1 } AS n", "the final RETURN needs a LIMIT"),
+    # the quote of a comment must not open a string that hides the next line
+    ("MATCH (c:Company) // it's fine\nMATCH (a)-[*]-(b) RETURN b LIMIT 1", "unbounded variable-length path"),
+    ("CALL db.createLabel YIELD x RETURN x LIMIT 1", "procedure db.createLabel is not allowed"),
+    ("MATCH (n:$($label)) RETURN n LIMIT 5", "dynamic labels"),
+    (
+        "MATCH (c:Company) CALL { WITH c RETURN c.name AS n } IN CONCURRENT TRANSACTIONS RETURN n LIMIT 5",
+        "TRANSACTIONS",
+    ),
 ]
 
 
