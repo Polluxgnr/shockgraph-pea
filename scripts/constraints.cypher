@@ -10,6 +10,8 @@ CREATE CONSTRAINT country_code IF NOT EXISTS FOR (k:Country) REQUIRE k.code IS U
 CREATE CONSTRAINT factor_code IF NOT EXISTS FOR (x:Factor) REQUIRE x.code IS UNIQUE;
 CREATE CONSTRAINT article_url IF NOT EXISTS FOR (a:Article) REQUIRE a.url IS UNIQUE;
 CREATE CONSTRAINT claim_id IF NOT EXISTS FOR (q:Claim) REQUIRE q.claim_id IS UNIQUE;
+// Technical node of the GDS refresh (role C, app/services/gds.py): at most one, deleted after every refresh.
+CREATE CONSTRAINT gds_refresh_lock IF NOT EXISTS FOR (lock:GdsRefreshLock) REQUIRE lock.name IS UNIQUE;
 
 CREATE INDEX company_ticker IF NOT EXISTS FOR (c:Company) ON (c.ticker);
 CREATE INDEX company_pea IF NOT EXISTS FOR (c:Company) ON (c.pea_eligible);

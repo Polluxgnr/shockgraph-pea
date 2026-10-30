@@ -48,6 +48,10 @@ An API response or an agent answer carries the truth level of every number it sh
 | `Article` | `url` | `title`, `source` (domain), `published_at` (date) |
 | `Claim` | `claim_id` | `kind` (`SUPPLIES`, `COMPETES_WITH`), `confidence` (0–1), `status` (`hypothesis` / `confirmed` / `rejected`), `sentence`, `model` |
 
+Technical node, not part of the market graph: `GdsRefreshLock` (key `name`, plus `token`, `acquired_at`). It
+serializes GDS refreshes across API workers, exists only while a refresh runs, is never returned by the API and is
+not in the agent's label allow-list.
+
 Daily price series are **not** stored in the graph: they stay in `data/cache/*.parquet`.
 The graph only stores what is derived from them (`SENSITIVE_TO`, `CORRELATED_WITH`).
 
