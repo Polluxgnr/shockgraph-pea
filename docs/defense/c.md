@@ -420,3 +420,102 @@ verifier (C5) --> answer + claims + trace
 - *What if Ollama is down?* The router lets the question through, the planner stops, and the writer gives its
   fixed answer ("I could not write a reliable answer...") with no claim. No error page, and nothing invented
   (test `test_model_down_gives_a_safe_answer_not_an_error`).
+
+## C5 · The verifier (`app/agent/verifier.py`, `docs/agent.md`)
+
+### What it does
+
+The writer (the large model) turns the tool results into claims. Before anything reaches the user, the
+verifier checks every claim with five rules and no model:
+
+| Rule | Example | Outcome |
+| --- | --- | --- |
+| Every evidence ref exists in the database | `Company:XX0000000000` | removed |
+| Every number appears in a tool result or argument | "AeroLys beta 0.85" when the tool said -0.41 | removed |
+| ... in a result about the claim's evidence | "AeroLys beta 0.62" when 0.62 is Petrolia's beta | removed |
+| A non-refused answer has at least one claim | prose with numbers, `claims` empty | safe answer |
+| The truth level is not stronger than its source | "Petrolia's beta is 0.62" stated as a `fact` | lowered to `estimate` |
+| No causal wording on an estimate, prediction or hypothesis | "Petrolia rises *because* Brent rises" | removed |
+| No buy or sell wording | "you should buy Petrolia", "vous devriez vendre" | removed |
+| Some tool result is about the claim's evidence | "AeroLys produces copper" when no result names AeroLys and copper | removed |
+
+Removed claims are not hidden: they go to `removed_claims` with a `reason`, so the trace shows what the model
+tried to say and why it was stopped. The answer shown is always the claims that passed, joined: the writer's
+own prose cannot be tied to evidence, so it never reaches the user.
+
+### How a number is matched
+
+- Rounding is allowed: "0.62" matches 0.6213 (within half a unit of the last digit written).
+- "48 %" matches a share of 0.48; "+20 %" matches the `pct: 20` the planner passed to the shock tool.
+- "falls 8.2 %" matches -8.2 (no sign written: the size is compared). "+0.41" does not match -0.41.
+- `EUR10Y` and `FR0000120271` are codes, not numbers: digits stuck to letters are ignored.
+- "1,000" is read both ways (a thousand, or 1.000 with a French comma); it is supported if either reading
+  matches. Same for "1 000" with a no-break space.
+- A tool call that ended in an error supports nothing.
+- The number must come from the right row. A row that names companies (`isin`, `company_isin`, ...) only
+  supports a claim citing one of them. A row without a company (a portfolio's factor line) must share a
+  code with the evidence (`factor_code`, `claim_id`, or what the call was asked about). The arguments
+  ("+20 %") and the length of a returned list support any claim: they are the question, not a result.
+- No claim at all (the writer left them out) means nothing was checked: the answer becomes "I could not
+  verify any statement...". The clarification question never goes through the verifier.
+
+### How the truth level is found
+
+The truth level of a number is the one of the result it comes from. Most results say it (`truth` on an
+exposure or a shock line); for the others, the field says it (`weighted_beta` is an estimate, `prob` a
+prediction, `claim_id` a hypothesis). A claim with numbers takes the weakest level of its sources. A claim
+without numbers may be as strong as the strongest result that names all its refs: "Petrolia produces Brent"
+stays a fact even if Petrolia's Brent beta (an estimate) is also in the trace.
+
+### Choices and rejected alternatives
+
+| Choice | Rejected | Why |
+| --- | --- | --- |
+| Rules for refs, numbers and truth levels | A second model as a judge | A model can be argued into agreeing; a number comparison cannot. Rules are also instant and testable |
+| A model judge for advice, on top of the phrases | Keep growing the phrase list | Measured on 40 labelled sentences: the phrases catch 15 % of the advice, the qwen2.5:7b judge 100 %. Advice is a meaning ("a good fit for your PEA"), not a word. This is how guardrail tools do it (Llama Guard, NeMo self-check, Coralogix policies) |
+| The 7B as judge | The 3B (faster) | The 3B caught 85 % and flagged 2 of 10 plain impact claims as advice, including the TotalEnergies one shown in the demo; the 7B none, and it is already loaded |
+| The judge can only remove | Let it rewrite or restore | It sees one sentence, not the conversation, and its SAFE never brings back a claim the rules removed |
+| No verdict removes the claim (fail closed) | Let the phrases decide (fail open) | The phrases catch 15 % of the advice: with Ollama down, "a good fit for your PEA" would be shown. Eliott caught it in review |
+| No judge with the fake provider | The scripted model as judge | It never answers ADVICE or SAFE, so failing closed would empty every answer in the tests and in the evaluation |
+| Lower a truth level that is too strong | Remove the claim | The statement is true, only its label is wrong: lowering keeps the information and fixes the label |
+| Remove causal claims | Rewrite them ("moved with") | A rewrite by rule breaks sentences in two languages; removing is safe and the reason is shown |
+| Always show the kept claims, not the prose | Keep the writer's prose when nothing was removed | The prose cannot be tied to refs: it could give Petrolia's 0.62 to AeroLys while every claim is right |
+| Match with rounding | Exact match | The writer must be allowed to write 0.62 for 0.6213, or every answer would be emptied |
+| Tie a number to the row that holds it | Any number of the trace | Petrolia's 0.62 would support "AeroLys beta 0.62" |
+| No claims: replace with the safe answer | Ask the writer again | A retry costs another model call and may fail the same way; the safe answer is immediate and honest |
+
+### Limits (say them first)
+
+- A row is matched by its ISIN and codes, not by the meaning of the field: a claim calling Petrolia's r2 its
+  beta (both on the same row) passes. The first version was weaker: any 0.62 in the trace supported any
+  claim; Eliott found it in review and the number is now tied to its row.
+- Causal wording is still a list of phrases (English and French): an unusual phrasing can get through.
+- The advice judge is measured on 40 sentences we wrote ourselves: 100 % is on that set, not a guarantee.
+  It also removed one description ("Je ne peux pas vous dire s'il faut acheter ou vendre"), so 5 % false
+  alarms. With the fake provider (CI, tests) there is no judge and only the phrases run, and they catch 15 %.
+  With a real model that gives no verdict, the claim is removed: safe, but an Ollama crash empties the answer.
+- The verifier checks claims, not omissions: an answer that leaves out the most exposed company is not
+  caught.
+
+### Likely questions
+
+- *What if the model invents a number?* Test `test_an_invented_number_is_removed_and_the_prose_rebuilt`:
+  0.85 appears in no tool result, the claim moves to `removed_claims` with "number not found in a tool
+  result about its evidence: 0.85", and the prose keeps only the verified claim.
+- *What if it calls a beta a fact?* It is lowered to `estimate`, with the reason "stated as fact, its source
+  is a estimate: lowered" (test `test_a_beta_stated_as_a_fact_is_lowered_to_an_estimate`).
+- *Why is "because" forbidden?* A beta measures how two prices moved together. Saying one *causes* the other
+  is a claim the data cannot support (oil and airlines can both react to the economy).
+- *Does the verifier slow the agent down?* The rules: one existence query per label (a few index seeks) and
+  a walk through the trace in Python, milliseconds. The advice judge: one short model call per kept claim,
+  about 2 s each on a CPU (at most 4 claims), faster on a GPU.
+- *How do you know the advice judge works?* `python -m ml.advice_eval`: 40 labelled sentences, English and
+  French, half advice and half description, with the hard cases (advice without "buy", descriptions with
+  "sells"). None of them is an example inside the judge's prompt. Phrases: 15 % caught. 3B: 85 %. 7B: 100 %,
+  5 % false alarms.
+- *And if Ollama crashes while judging?* The judge gives no verdict, and a claim with no verdict is removed:
+  only a claim the judge called SAFE is shown (test `test_without_a_judge_verdict_the_claims_are_removed`).
+  The answer becomes "nothing verified" rather than risk showing advice.
+- *Where does the policy come from?* The legal definition of investment advice (MiFID II, as the AMF applies
+  it): a recommendation to buy, sell or hold a specific instrument, or presenting one as suitable for the
+  reader. Describing an exposure is not advice; telling the reader what to do with it is.
