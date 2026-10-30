@@ -475,6 +475,8 @@ stays a fact even if Petrolia's Brent beta (an estimate) is also in the trace.
 | A model judge for advice, on top of the phrases | Keep growing the phrase list | Measured on 40 labelled sentences: the phrases catch 15 % of the advice, the qwen2.5:7b judge 100 %. Advice is a meaning ("a good fit for your PEA"), not a word. This is how guardrail tools do it (Llama Guard, NeMo self-check, Coralogix policies) |
 | The 7B as judge | The 3B (faster) | The 3B caught 85 % and flagged 2 of 10 plain impact claims as advice, including the TotalEnergies one shown in the demo; the 7B none, and it is already loaded |
 | The judge can only remove | Let it rewrite or restore | It sees one sentence, not the conversation, and its SAFE never brings back a claim the rules removed |
+| No verdict removes the claim (fail closed) | Let the phrases decide (fail open) | The phrases catch 15 % of the advice: with Ollama down, "a good fit for your PEA" would be shown. Eliott caught it in review |
+| No judge with the fake provider | The scripted model as judge | It never answers ADVICE or SAFE, so failing closed would empty every answer in the tests and in the evaluation |
 | Lower a truth level that is too strong | Remove the claim | The statement is true, only its label is wrong: lowering keeps the information and fixes the label |
 | Remove causal claims | Rewrite them ("moved with") | A rewrite by rule breaks sentences in two languages; removing is safe and the reason is shown |
 | Always show the kept claims, not the prose | Keep the writer's prose when nothing was removed | The prose cannot be tied to refs: it could give Petrolia's 0.62 to AeroLys while every claim is right |
@@ -490,7 +492,8 @@ stays a fact even if Petrolia's Brent beta (an estimate) is also in the trace.
 - Causal wording is still a list of phrases (English and French): an unusual phrasing can get through.
 - The advice judge is measured on 40 sentences we wrote ourselves: 100 % is on that set, not a guarantee.
   It also removed one description ("Je ne peux pas vous dire s'il faut acheter ou vendre"), so 5 % false
-  alarms. Without Ollama (CI, tests) only the phrases run, and they catch 15 %.
+  alarms. With the fake provider (CI, tests) there is no judge and only the phrases run, and they catch 15 %.
+  With a real model that gives no verdict, the claim is removed: safe, but an Ollama crash empties the answer.
 - The verifier checks claims, not omissions: an answer that leaves out the most exposed company is not
   caught.
 
@@ -510,6 +513,9 @@ stays a fact even if Petrolia's Brent beta (an estimate) is also in the trace.
   French, half advice and half description, with the hard cases (advice without "buy", descriptions with
   "sells"). None of them is an example inside the judge's prompt. Phrases: 15 % caught. 3B: 85 %. 7B: 100 %,
   5 % false alarms.
+- *And if Ollama crashes while judging?* The judge gives no verdict, and a claim with no verdict is removed:
+  only a claim the judge called SAFE is shown (test `test_without_a_judge_verdict_the_claims_are_removed`).
+  The answer becomes "nothing verified" rather than risk showing advice.
 - *Where does the policy come from?* The legal definition of investment advice (MiFID II, as the AMF applies
   it): a recommendation to buy, sell or hold a specific instrument, or presenting one as suitable for the
   reader. Describing an exposure is not advice; telling the reader what to do with it is.
