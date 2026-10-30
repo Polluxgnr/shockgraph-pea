@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from neo4j.exceptions import ServiceUnavailable
 
@@ -33,6 +34,23 @@ app = FastAPI(title="ShockGraph PEA", version=get_settings().app_version, descri
 
 for module in (health, companies, portfolio, network, hypotheses, agent):
     app.include_router(module.router)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+    """Return a compact 422 response while retaining field-level validation details."""
+    errors = [
+        {
+            "field": ".".join(str(part) for part in error["loc"] if part != "body"),
+            "message": error["msg"],
+            "type": error["type"],
+        }
+        for error in exc.errors()
+    ]
+    return JSONResponse(
+        status_code=422,
+        content={"detail": "Request validation failed", "errors": errors},
+    )
 
 
 @app.exception_handler(NotImplementedError)

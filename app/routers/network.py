@@ -7,7 +7,7 @@ from app.models.common import ISIN_PATTERN, ErrorResponse
 from app.models.companies import Exposure
 from app.models.network import Cluster, GdsReport, RankedCompany, SimilarCompany
 from app.security import require_api_key
-from app.services.gds import GdsService
+from app.services.gds import GdsService, RefreshInProgress
 
 router = APIRouter(prefix="/api", tags=["network (GDS & ML)"])
 NOT_FOUND = {404: {"model": ErrorResponse}}
@@ -34,10 +34,21 @@ def systemic(
     return service.systemic(limit=limit)
 
 
-@router.post("/network/refresh", response_model=GdsReport, dependencies=[Depends(require_api_key)], responses={401: {}})
+@router.post(
+    "/network/refresh",
+    response_model=GdsReport,
+    dependencies=[Depends(require_api_key)],
+    responses={401: {}, 409: {"model": ErrorResponse}},
+)
 def refresh(service: GdsService = Depends(get_gds_service)) -> GdsReport:
-    """Recompute projections and algorithms (writes to the graph: API key required)."""
-    return service.refresh()
+    """Recompute projections and algorithms (writes to the graph: API key required).
+
+    409 when another refresh holds the lock (another worker or `make gds`): nothing changed, retry later.
+    """
+    try:
+        return service.refresh()
+    except RefreshInProgress as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.get("/companies/{isin}/similar", response_model=list[SimilarCompany], responses=NOT_FOUND)

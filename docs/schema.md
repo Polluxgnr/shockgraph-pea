@@ -84,5 +84,6 @@ Everywhere (API, agent, tests), a node is referenced as `Label:key`:
 
 ## Constraints and indexes
 
-See `scripts/constraints.cypher`. Full-text indexes: `company_name_ft` (name, ticker), `fund_name_ft`
+See `scripts/constraints.cypher`. Range index `company_market_cap` on `Company.market_cap_eur` serves the paginated search (ordering and cursor).
+Full-text indexes: `company_name_ft` (name, ticker), `fund_name_ft`
 (name, ticker), `factor_name_ft` (name, code). Do not rename them: services and the agent depend on them.
