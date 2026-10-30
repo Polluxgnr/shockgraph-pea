@@ -38,7 +38,7 @@ It is an allow-list: anything not explicitly allowed is refused. Two layers sit 
 
 Tested in `tests/test_a_guardrails.py`: 50 refused queries (each with its expected reason), 18 accepted ones,
 and `EXPLAIN` of every accepted query on Neo4j to prove that what we accept is valid Cypher. Saty's four review
-rounds on #23 found nine bypasses; each one is now a test case.
+rounds on #23 found eight bypasses; each one is now a test case.
 
 ## How patterns hidden in maps and lists are found
 
