@@ -18,7 +18,9 @@ trace and the database, with rules and no model:
    (MiFID II / AMF: a recommendation to buy, sell, hold... a specific instrument, or presented as suitable for
    the reader). A list of phrases can never be complete; the judge catches the indirect forms ("a good fit for
    your PEA"). The judge can only remove a claim, never add or change one, and it sees one sentence, not the
-   conversation. Without a model (tests, CI, Ollama down) the phrases still apply.
+   conversation. It fails closed: a claim it gives no verdict on (Ollama down, a reply that is neither ADVICE
+   nor SAFE) is removed, since the phrases alone miss most indirect advice. With the fake provider (tests, CI)
+   there is no model to judge, so there is no judge and the phrases apply alone.
 
 A claim must also be about something the trace returned: one result object (with what its call was asked)
 names every key of its evidence. "AeroLys produces Brent" with nothing about AeroLys and Brent in the trace goes.
@@ -116,6 +118,7 @@ Examples:
 
 Answer with exactly one word: ADVICE or SAFE."""
 JUDGE_REASON = "the advice judge read it as a recommendation to buy, sell or hold: the app never advises"
+NO_VERDICT_REASON = "the advice judge gave no verdict (model down or unreadable reply): only a cleared claim is shown"
 
 # Fields that name the object a row is about. Any field ending in "isin" names a company or a fund.
 CODE_FIELDS = ("code", "factor_code", "claim_id")
@@ -390,8 +393,13 @@ class AnswerVerifier:
                 kept.append(checked)
         if kept and self.judge:
             verdicts = self.judge.advice([claim.text for claim in kept])
-            removed += [claim.model_copy(update={"reason": JUDGE_REASON}) for claim, bad in zip(kept, verdicts) if bad]
-            kept = [claim for claim, bad in zip(kept, verdicts) if not bad]
+            # fail closed: only a SAFE verdict (False) keeps a claim; ADVICE and no verdict both remove it
+            removed += [
+                claim.model_copy(update={"reason": JUDGE_REASON if verdict else NO_VERDICT_REASON})
+                for claim, verdict in zip(kept, verdicts)
+                if verdict is not False
+            ]
+            kept = [claim for claim, verdict in zip(kept, verdicts) if verdict is False]
         text = " ".join(claim.text for claim in kept) or NOTHING_VERIFIED
         return answer.model_copy(update={"answer": text, "claims": kept, "removed_claims": removed})
 
@@ -424,7 +432,10 @@ class AdviceJudge:
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "AdviceJudge | None":
-        """The judge on the large model; None when there is no chat model yet (C4 not merged)."""
+        """The judge on the large model; None with the fake provider (a scripted model cannot judge) or when
+        there is no chat model yet (C4 not merged)."""
+        if settings.llm_provider == "fake":
+            return None
         try:
             return cls(get_chat_model(settings, "large"))
         except NotImplementedError:
@@ -436,7 +447,7 @@ class AdviceJudge:
         try:
             replies = self.model.batch(prompts)
         except Exception:  # pylint: disable=broad-exception-caught
-            return [None] * len(texts)  # Ollama down or broken: the phrases still apply
+            return [None] * len(texts)  # Ollama down or broken: no verdict, so verify() removes the claims
         return [read_verdict(reply.content) for reply in replies]
 
 

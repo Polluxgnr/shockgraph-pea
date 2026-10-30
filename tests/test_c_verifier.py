@@ -389,18 +389,19 @@ def test_existing_refs_on_the_mini_graph(neo4j_client):
 class FakeJudgeModel:
     """Chat model stand-in for the judge: answers from `replies` (sentence -> text), records what it read."""
 
-    def __init__(self, replies: dict[str, str] | None = None, broken: bool = False) -> None:
+    def __init__(self, replies: dict[str, str] | None = None, broken: bool = False, default: str = "SAFE") -> None:
         self.replies = replies or {}
         self.broken = broken
+        self.default = default
         self.read: list[str] = []
 
     def batch(self, prompts: list) -> list:
-        """One reply per prompt, keyed on the sentence; 'SAFE' when not listed."""
+        """One reply per prompt, keyed on the sentence; `default` when not listed."""
         if self.broken:
             raise ConnectionError("Ollama is not running")
         sentences = [prompt[-1].content.removeprefix("Sentence: ") for prompt in prompts]
         self.read += sentences
-        return [AIMessage(content=self.replies.get(sentence, "SAFE")) for sentence in sentences]
+        return [AIMessage(content=self.replies.get(sentence, self.default)) for sentence in sentences]
 
 
 def judged(model: FakeJudgeModel, *claims: AgentClaim) -> AgentAnswer:
@@ -430,13 +431,30 @@ def test_the_judge_only_reads_claims_the_rules_kept_and_never_brings_one_back():
     assert result.claims == [good] and result.removed_claims[0].text == invented.text
 
 
-def test_without_a_judge_verdict_the_phrases_decide():
-    """Ollama down, or a reply that is neither ADVICE nor SAFE: the claims are judged by the phrases only."""
+@pytest.mark.parametrize("model", [FakeJudgeModel(broken=True), FakeJudgeModel(default="Maybe.")])
+def test_without_a_judge_verdict_the_claims_are_removed(model):
+    """Ollama down, or a reply that is neither ADVICE nor SAFE: fail closed, nothing uncleared is shown.
+
+    "A good fit for your PEA" has no buy or sell, so the phrases alone would keep it (Eliott's review).
+    """
+    advice = claim("Petrolia (beta 0.62 to Brent) is a good fit for your PEA.", "estimate", f"Company:{PETROLIA}")
     good = claim("Petrolia's beta to Brent is 0.62.", "estimate", f"Company:{PETROLIA}", "Factor:BRENT")
-    phrased = claim("Beta 0.62: you should buy Petrolia now.", "estimate", f"Company:{PETROLIA}")
-    for model in (FakeJudgeModel(broken=True), FakeJudgeModel({good.text: "Maybe."})):
-        result = judged(model, good, phrased)
-        assert result.claims == [good] and "never advises" in result.removed_claims[0].reason
+    result = judged(model, advice, good)
+    assert result.claims == []
+    assert [removed.text for removed in result.removed_claims] == [advice.text, good.text]
+    assert all("no verdict" in removed.reason for removed in result.removed_claims)
+    assert result.answer == NOTHING_VERIFIED
+
+
+def test_only_a_safe_verdict_keeps_a_claim():
+    """In one batch: SAFE kept, ADVICE removed as advice, an unreadable reply removed as no verdict."""
+    safe = claim("Petrolia's beta to Brent is 0.62.", "estimate", f"Company:{PETROLIA}", "Factor:BRENT")
+    advice = claim("Petrolia (beta 0.62 to Brent) is a good fit for your PEA.", "estimate", f"Company:{PETROLIA}")
+    unclear = claim("Petrolia produces Brent.", "fact", f"Company:{PETROLIA}", "Factor:BRENT")
+    result = judged(FakeJudgeModel({advice.text: "ADVICE", unclear.text: "I am not sure."}), safe, advice, unclear)
+    assert result.claims == [safe]
+    reasons = {removed.text: removed.reason for removed in result.removed_claims}
+    assert "advice judge read it" in reasons[advice.text] and "no verdict" in reasons[unclear.text]
 
 
 @pytest.mark.parametrize(
@@ -456,6 +474,12 @@ def test_no_judge_until_there_is_a_chat_model(monkeypatch):
 
     monkeypatch.setattr("app.agent.verifier.get_chat_model", not_written)
     assert AdviceJudge.from_settings(Settings()) is None
+
+
+def test_no_judge_with_the_fake_provider():
+    """The scripted test model never answers ADVICE or SAFE: as a judge it would remove every claim in CI."""
+    assert AdviceJudge.from_settings(Settings(llm_provider="fake")) is None
+    assert AnswerVerifier(KnownRefs()).judge is None
 
 
 def test_the_labelled_set_is_balanced_and_unseen_by_the_judge():
