@@ -8,7 +8,15 @@ from app.models.companies import CompanyDetail, CompanySummary, Exposure, Factor
 from app.services.companies import CompanyService, FactorService
 
 router = APIRouter(prefix="/api", tags=["companies & factors"])
-NOT_FOUND = {404: {"model": ErrorResponse}}
+COMMON_ERRORS = {
+    422: {"model": ErrorResponse, "description": "A path or query parameter failed validation."},
+    501: {"model": ErrorResponse, "description": "The requested service is not implemented yet."},
+    503: {"model": ErrorResponse, "description": "The graph database is unavailable."},
+}
+NOT_FOUND = {
+    **COMMON_ERRORS,
+    404: {"model": ErrorResponse, "description": "The requested company or factor does not exist."},
+}
 
 
 def get_company_service(client: Neo4jClient = Depends(get_client)) -> CompanyService:
@@ -21,7 +29,7 @@ def get_factor_service(client: Neo4jClient = Depends(get_client)) -> FactorServi
     return FactorService(client)
 
 
-@router.get("/companies", response_model=Page[CompanySummary])
+@router.get("/companies", response_model=Page[CompanySummary], responses=COMMON_ERRORS)
 def search_companies(
     query: str | None = Query(default=None, alias="q", min_length=2, max_length=80, description="Name or ticker"),
     sector: str | None = Query(default=None, max_length=40),
@@ -31,7 +39,10 @@ def search_companies(
     service: CompanyService = Depends(get_company_service),
 ) -> Page[CompanySummary]:
     """Search companies, paginated with a cursor."""
-    return service.search(query=query, sector=sector, pea_only=pea_only, limit=limit, cursor=cursor)
+    try:
+        return service.search(query=query, sector=sector, pea_only=pea_only, limit=limit, cursor=cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid pagination cursor") from exc
 
 
 @router.get("/companies/{isin}", response_model=CompanyDetail, responses=NOT_FOUND)
@@ -57,7 +68,7 @@ def company_exposures(
     return service.exposures(isin, min_r2=min_r2)
 
 
-@router.get("/factors", response_model=list[FactorSummary])
+@router.get("/factors", response_model=list[FactorSummary], responses=COMMON_ERRORS)
 def list_factors(service: FactorService = Depends(get_factor_service)) -> list[FactorSummary]:
     """Every commodity, currency and rate in the graph."""
     return service.list_factors()
