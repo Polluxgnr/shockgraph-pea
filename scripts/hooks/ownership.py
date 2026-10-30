@@ -75,6 +75,7 @@ OWNERS: dict[str, list[str]] = {
         "Dockerfile",
         ".dockerignore",
         "docker-compose.yml",
+        "docker-compose.gpu.yml",  # opt-in NVIDIA override (issue #43)
         "nginx/*",
         "Makefile",
         ".github/workflows/publish.yml",
@@ -85,6 +86,7 @@ OWNERS: dict[str, list[str]] = {
         "docs/architecture.drawio",
         "docs/perf.md",
         "docs/agent_eval.md",
+        "docs/defense/b-video.md",  # issue #43
     ],
     "c": [
         "scripts/ingest/prices.py",

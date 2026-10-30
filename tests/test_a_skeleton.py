@@ -211,6 +211,9 @@ def test_every_file_has_one_owner():
         ("a", "tests/test_a_ingest.py", True),
         ("a", "tests/test_b_api.py", False),
         ("c", "requirements.txt", True),
+        ("b", "docker-compose.gpu.yml", True),
+        ("b", "docs/defense/b-video.md", True),
+        ("c", "docs/defense/b-video.md", False),
     ],
 )
 def test_ownership(role, path, allowed):
