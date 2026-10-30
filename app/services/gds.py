@@ -266,8 +266,36 @@ class GdsService:
         return [SimilarCompany(**item) for item in rows[0]["similar"]]
 
     def predicted_exposures(self, isin: str, limit: int = 10) -> list[Exposure] | None:
-        """PREDICTED_SENSITIVITY links of a company (truth `prediction`), None if unknown."""
-        raise NotImplementedError("C3: GdsService.predicted_exposures")
+        """PREDICTED_SENSITIVITY links of a company (truth `prediction`), None if unknown.
+
+        Highest probability first. `source` names the model version that made the prediction.
+        """
+        # A known company without predictions gives one row of nulls (OPTIONAL MATCH), an unknown one no row.
+        query = """
+        MATCH (c:Company {isin: $isin})
+        OPTIONAL MATCH (c)-[p:PREDICTED_SENSITIVITY]->(x:Factor)
+        RETURN c.name AS company_name, x.code AS factor_code, x.name AS factor_name, p.prob AS prob,
+               p.model_version AS model_version
+        ORDER BY prob DESC, factor_code
+        LIMIT $limit
+        """
+        rows = self.client.read(query, {"isin": isin, "limit": limit})
+        if not rows:
+            return None
+        return [
+            Exposure(
+                company_isin=isin,
+                company_name=row["company_name"],
+                factor_code=row["factor_code"],
+                factor_name=row["factor_name"],
+                relation="PREDICTED_SENSITIVITY",
+                truth="prediction",
+                prob=row["prob"],
+                source=row["model_version"],
+            )
+            for row in rows
+            if row["factor_code"] is not None
+        ]
 
 
 def _elapsed_ms(start: float) -> int:
