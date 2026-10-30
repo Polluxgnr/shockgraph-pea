@@ -36,6 +36,7 @@ class ErrorResponse(BaseModel):
     """Body of every error response."""
 
     detail: str
+    errors: list[dict[str, str]] | None = None
 
 
 class HealthResponse(BaseModel):
