@@ -228,6 +228,117 @@ network", not "same company profile".
   `test_a_failure_after_louvain_keeps_the_previous_results` makes PageRank fail after Louvain and checks that
   the previous communities and embeddings are untouched, with no staging value and no projection left.
 
+## C3 · Predicted exposures (`ml/`, `GdsService.predicted_exposures`)
+
+### The question, in plain words
+
+C1 gives a beta only where a stock's own prices show it clearly. The model asks something else: judging only
+by **where a stock sits in the graph**, does it look like a stock exposed to this factor? One row is one
+pair (company, factor), for example (Eni, NATGAS_EU). The answer is a probability, stored as
+`PREDICTED_SENSITIVITY {prob, direction, model_version}` with the truth level `prediction`.
+
+The label of a pair is "C1 would write a SENSITIVE_TO here" (|t| >= 2 or partial r2 >= 0.05): the model learns
+exactly the rule the graph uses for its estimates.
+
+### What the model sees
+
+| Feature | Meaning |
+| --- | --- |
+| `produces`, `consumes` | a PRODUCES / CONSUMES link declared for the company or its industry (fact) |
+| `european` | the stock trades in Europe |
+| `industry_rate`, `industry_beta`, `industry_peers` | share of the *other* companies of its industry exposed to the factor, their mean beta, how many |
+| `neighbour_*` | same for its CORRELATED_WITH neighbours |
+| `community_*` | same for the other members of its Louvain community |
+| `knn_*` | same for its 10 nearest companies by FastRP embedding (cosine) |
+| `factor_*` | which factor the row is about |
+
+Never the pair's own beta: that is the answer. Industry and community averages subtract the company itself;
+the tests check it on a hand-built case.
+
+### The temporal split (the key point)
+
+Two windows of 3 years, one after the other: **2020-10-25 → 2023-10-24** to train, **2023-10-25 →
+2026-10-23** to test. Every feature and every label is computed inside its own window, from that window's
+prices only, including the correlations, the Louvain communities and the FastRP embeddings (GDS reruns on a
+temporary projection of each window). The model never sees a price of the test window.
+
+Choosing between the two models also stays in the training window: a quarter of its *companies* are held
+out, and the best AUC-PR there wins. Companies, not rows: the 12 rows of one company look alike, and
+splitting them would make the check too easy.
+
+### Results (real run, 28 Oct 2026)
+
+| | Baseline (industry share) | Logistic regression | Gradient boosting (chosen) |
+| --- | --- | --- | --- |
+| AUC-PR | 0.270 | 0.572 | 0.573 |
+| precision@100 | 0.75 | 0.94 | 1.00 |
+| precision@500 | 0.61 | 0.95 | 0.97 |
+
+About 25,000 pairs per window; 14 % of the test pairs are exposed, which is what a random ranking would score
+in AUC-PR. The models double the baseline. Of the 500 pairs the chosen model ranks highest, 97 % are
+really exposed in the test window.
+
+What it relies on (AUC-PR lost when a feature is shuffled): `neighbour_rate` 0.31, far ahead of
+`industry_rate` 0.03 and `knn_rate` 0.02. In words: a stock whose correlation neighbours are exposed to a
+factor is very likely exposed too.
+
+### Why AUC-PR and precision@k, not accuracy
+
+Only 14 % of pairs are exposed. A model that always says "not exposed" has 86 % accuracy and is useless.
+AUC-PR measures how well the exposed pairs are ranked first; precision@k answers the practical question "if I
+look at the k pairs the model is surest about, how many are right?".
+
+### Choices and rejected alternatives
+
+| Choice | Rejected | Why |
+| --- | --- | --- |
+| Train on the older window, test on the recent one | Random split of the rows | A random split mixes the same weeks in train and test: it measures memory, not whether the rule holds in another period |
+| Industry share as the baseline | No baseline | Without one, 0.57 means nothing; the industry is the first thing an analyst would look at |
+| Embedding through its 10 nearest companies | 64 raw columns | A raw vector says nothing about one given factor; "are my look-alikes exposed to oil?" does |
+| Gradient boosting (chosen on held-out companies) | Logistic regression | Same AUC-PR (0.573 vs 0.572), but boosting is better at the top of the list (precision@100 1.00 vs 0.94) |
+| Write only prob >= 0.5 and only where no SENSITIVE_TO exists | Write every score | The graph keeps one statement per pair: an estimate when the prices show it, a prediction otherwise |
+| `direction` from the peers' mean beta | A second model for the sign | The model says whether; the peers already say which way, and it stays explainable |
+| Replace the predictions in one statement (one transaction) | Delete, then write in batches | Batches are separate transactions: a crash in the middle deleted the old predictions and left a part of the new ones. Now a failure keeps the old ones (a test breaks the second row on purpose) |
+| Validation split checked for both classes, up to 20 tries | The first random split | With few exposed companies, the held-out quarter can hold none of them: AUC-PR is then undefined. Same seed, so the same data gives the same split |
+
+### Cost
+
+- Two windows × about 28,000 regressions (3 columns, 156 weeks each): seconds.
+- GDS per window: one projection of about 3,400 correlation pairs, Louvain and FastRP streamed, dropped.
+- Gradient boosting on 24,000 rows: seconds. The download dominates: 6 years for about 2,400 symbols.
+- Reads: `predicted_exposures` is one index seek on `Company.isin` plus its relationships, with a `LIMIT`.
+
+### Limits (say them first)
+
+- **Same-window features.** The neighbours' exposure and the label come from the same 3 years, and two oil
+  stocks are often correlated *because* both follow oil. So part of what the model learns is "a stock that
+  moves with oil stocks moves with oil". It is useful for filling gaps in the graph; it is not a forecast of
+  a future exposure. A stricter test (features from the older window, labels from the recent one) would
+  measure that and is the next step.
+- **Noisy labels.** C1's rule lets about 5 % of truly zero betas through by chance (multiple testing), so a
+  share of the "exposed" labels are noise.
+- **Coverage.** Yahoo has no usable history for a few hundred tickers; a stock without prices has no
+  neighbours, community or embedding, and the model is not confident about it on its industry alone.
+
+### Likely questions
+
+- *Is a prediction a fact?* No: truth level `prediction`, always shown with its probability and the model
+  version. "The model predicts that Eni is exposed to European gas", never "Eni is exposed".
+- *Why not just use the industry?* That is the baseline: 0.27 AUC-PR. Neighbours in the correlation network
+  carry much more, because two companies of different industries can share an exposure (a utility and a
+  chemicals company both buying gas).
+- *Isn't the 0.57 inflated by the same-window features?* Partly, yes (see Limits). The split guarantees that
+  nothing from the test period is used in training; it does not make the features independent of the label
+  inside a window.
+- *And two runs at the same time?* The query writes a lock node first (`MlWriteLock`, unique name). The second
+  run waits on it until the first commits, then deletes what the first wrote: one set of links, never both. Without
+  it, 3 runs at once left duplicates in 8 rounds out of 10. The lock is deleted at the end of the same transaction.
+- *What if the write crashes halfway?* Nothing changes. The delete and the creates are one Cypher statement, so
+  one transaction: Neo4j applies all of it or none of it. The first version used batches and could leave the
+  graph with half of the new predictions; Eliott caught it in review.
+- *Why GDS again inside the ML code?* C2 writes communities and embeddings for the current window only. The
+  older window needs its own, computed the same way, so the comparison between windows is fair.
+
 ## C4 · The agent (`app/agent/graph.py`, `tools.py`, `app/llm/client.py`)
 
 ### What it does
