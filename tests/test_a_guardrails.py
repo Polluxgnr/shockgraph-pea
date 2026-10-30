@@ -188,3 +188,42 @@ def test_count_subquery_in_a_projection_gives_only_the_real_reason(validator):
 def test_list_in_relationship_gives_only_the_real_reason(validator, cypher):
     """The relationship is checked after its lists are gone: no `unknown label CORRELATED_WITH` in the trace."""
     assert validator.validate(cypher).reasons == ["unbounded variable-length path"]
+
+
+# Neo4j 5.26 reads these as `-` or `<` in a pattern (fifth review of #23): each one must not hide a relationship.
+UNICODE_DASHES = ["­", "‐", "‑", "‒", "–", "—", "―", "﹘", "﹣", "－"]
+UNICODE_ARROW_HEADS = ["⟨", "〈", "﹤", "＜"]
+
+
+@pytest.mark.parametrize("dash", UNICODE_DASHES)
+def test_unicode_dash_cannot_hide_an_unbounded_path(validator, dash):
+    """`(a)–[:X*]–(b)`: refused for the character and for what Neo4j would have run."""
+    cypher = f"MATCH (a:Company){dash}[:CORRELATED_WITH*]{dash}(b:Company) RETURN b.name LIMIT 5"
+    assert validator.validate(cypher).reasons == [
+        "non-ASCII characters are only allowed inside strings",
+        "unbounded variable-length path",
+    ]
+
+
+@pytest.mark.parametrize("head", UNICODE_ARROW_HEADS)
+def test_unicode_arrow_head_is_refused(validator, head):
+    """`<` look-alikes are folded, and the query is refused for its characters."""
+    cypher = f"MATCH (a:Company){head}-[:CORRELATED_WITH*]-(b:Company) RETURN b.name LIMIT 5"
+    reasons = validator.validate(cypher).reasons
+    assert reasons[0] == "non-ASCII characters are only allowed inside strings"
+    assert "unbounded variable-length path" in reasons
+
+
+def test_unicode_inside_strings_is_fine(validator):
+    """A company name with an en dash or an accent stays a valid string."""
+    assert validator.validate("MATCH (c:Company) WHERE c.name = 'Saint–Gobain Société' RETURN c LIMIT 5").valid
+
+
+def test_unicode_in_quantifier_and_subquery(validator):
+    """The dash family also reaches quantifiers and EXISTS subqueries."""
+    for cypher in [
+        "MATCH (a:Company)-[:CORRELATED_WITH]–{1,}(b:Company) RETURN b LIMIT 5",
+        "MATCH (a:Company) WHERE EXISTS { (a)–[:CORRELATED_WITH*]–(:Company) } RETURN a LIMIT 5",
+    ]:
+        reasons = validator.validate(cypher).reasons
+        assert reasons[0] == "non-ASCII characters are only allowed inside strings" and len(reasons) == 2

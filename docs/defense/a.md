@@ -142,7 +142,12 @@ passes every rule and builds n³ rows. A regex cannot see cost, so the database 
 sends a server-side transaction timeout (5 s), and the READ routing makes Neo4j refuse any write that slipped
 through. Three layers: validator, read transaction, timeout.
 
-**What did the review bring?** Saty's four rounds on #23 found eight bypasses (an unbounded quantifier after a
+**Why refuse every non-ASCII character outside strings?** Neo4j 5.26 reads ten Unicode dashes as `-` and four
+angle brackets as `<`: `(a)–[:X*]–(b)` is a real unbounded path that a validator reading ASCII would take for a
+list. Listing the characters fixes today's parser; refusing all of them also covers tomorrow's. The LLM writes
+ASCII, and company names with accents stay valid inside strings.
+
+**What did the review bring?** Saty's five rounds on #23 found nine bypasses (the ninth: Unicode dashes) (an unbounded quantifier after a
 relationship, a LIMIT expression, a path hidden in a map value, a list inside relationship brackets, a label after
 a comma, UNION, the work bound...). I then looked for more myself and found five (a LIMIT inside `COUNT {}`, a
 comment apostrophe hiding the next line, a procedure called without parentheses, dynamic labels,

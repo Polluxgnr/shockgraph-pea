@@ -66,6 +66,11 @@ START_CLAUSES = ("MATCH", "OPTIONAL MATCH", "WITH", "UNWIND", "CALL", "RETURN")
 # open a fake string that would hide the code after the comment.
 _STRING_OR_COMMENT = re.compile(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|//[^\n]*|/\*.*?\*/", re.S)
 _BACKTICK = re.compile(r"`([^`]*)`")
+# Neo4j 5.26 also reads these as `-`, `<` and `>` in a pattern (found by Saty in the fifth review of #23). Any other
+# non-ASCII character outside a string is refused too: we cannot list what the parser might accept tomorrow.
+_PATTERN_CHARACTERS = str.maketrans(
+    {char: "-" for char in "­‐‑‒–—―−﹘﹣－"} | {char: "<" for char in "⟨〈﹤＜"} | {char: ">" for char in "⟩〉﹥＞"}
+)
 # The innermost bracket: right after `-` it is a relationship (`-[r:X*..3]->`), otherwise a list or a comprehension.
 _INNER_BRACKET = re.compile(r"(-\s*)?\[([^\[\]]*)\]")
 _LABEL_USE = re.compile(r"(?:\b[A-Za-z_]\w*|\()\s*:\s*(!?[A-Za-z_]\w*(?:\s*[:&|]\s*!?[A-Za-z_]\w*)*)")
@@ -103,6 +108,15 @@ def sanitize(cypher: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def fold_pattern_characters(text: str) -> str:
+    """Read Unicode dashes and angle brackets the way Neo4j does (`(a)–[:X*]–(b)` is a relationship).
+
+    The query is refused anyway for its non-ASCII characters; folding them lets the other rules report the real
+    danger too (here an unbounded path), so the trace says what the query would have done.
+    """
+    return text.translate(_PATTERN_CHARACTERS)
+
+
 class CypherValidator:
     """Accepts only bounded, read-only queries over the known schema."""
 
@@ -113,6 +127,9 @@ class CypherValidator:
             return ValidationResult(False, ["empty query"])
         text = text[:-1].rstrip() if text.endswith(";") else text
         reasons: list[str] = []
+        if not text.isascii():
+            reasons.append("non-ASCII characters are only allowed inside strings")
+            text = fold_pattern_characters(text)
         if ";" in text:
             reasons.append("several statements (';') are not allowed")
         upper = text.upper()
