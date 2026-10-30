@@ -52,8 +52,9 @@ make seed               # real data: about 3 minutes with warm caches (first Ope
 make gds                # communities, PageRank and embeddings
 ```
 
-`docker compose ps` shows the health of the 4 services. Swagger: http://localhost/docs · Neo4j browser:
-http://localhost:7474 · `make help` lists every command.
+`docker compose ps` shows the health of the 4 services. **Demo page: http://localhost** (portfolio x-ray, shock,
+explained path, network, agent) · Swagger: http://localhost/docs · Neo4j browser: http://localhost:7474 ·
+`make help` lists every command.
 
 The API image is also published: `docker pull ghcr.io/polluxgnr/shockgraph-api:latest`.
 
