@@ -129,5 +129,24 @@ the whole connected component. 100 rows is more than an answer needs and keeps t
 **Limits.** Regex, not a parser: it can refuse a valid exotic query (safe direction); it does not judge whether a
 read query is semantically right: the verifier does that on the answer.
 
-Numbers: 29 refused and 10 accepted queries in `tests/test_a_guardrails.py`; every accepted query compiles
-(`EXPLAIN`) on Neo4j.
+**How are patterns hidden in maps and lists found?** Brackets are read innermost first: a bracket right after `-` is
+a relationship (types and length checked), any other is a list (its labels and quantifiers checked, then replaced
+by `0`). Map keys are removed only inside a real map, so `beta: r` is never read as the label `r`.
+
+**Why must every UNION branch have a LIMIT?** In Cypher the LIMIT after the last RETURN applies to the last branch
+only: `... RETURN c.name AS n UNION ... RETURN f.name AS n LIMIT 5` returned 2,470 rows on the dev database. Same
+idea for a LIMIT inside `COUNT { }`: the rule reads the top level only.
+
+**LIMIT bounds the rows, not the work.** `MATCH (a:Company), (b:Company), (c:Company) RETURN count(*) AS n LIMIT 1`
+passes every rule and builds n³ rows. A regex cannot see cost, so the database stops it: `read_with_timeout`
+sends a server-side transaction timeout (5 s), and the READ routing makes Neo4j refuse any write that slipped
+through. Three layers: validator, read transaction, timeout.
+
+**What did the review bring?** Saty's four rounds on #23 found eight bypasses (an unbounded quantifier after a
+relationship, a LIMIT expression, a path hidden in a map value, a list inside relationship brackets, a label after
+a comma, UNION, the work bound...). I then looked for more myself and found five (a LIMIT inside `COUNT {}`, a
+comment apostrophe hiding the next line, a procedure called without parentheses, dynamic labels,
+`IN CONCURRENT TRANSACTIONS`). Each is a test case.
+
+Numbers: 50 refused and 18 accepted queries in `tests/test_a_guardrails.py`; every accepted query compiles
+(`EXPLAIN`) on Neo4j in CI.
