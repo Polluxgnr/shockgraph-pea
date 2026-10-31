@@ -49,6 +49,9 @@ MIN_RHO = 0.5
 MAX_ROWS = 20_000  # LIMIT on the universe queries
 
 YAHOO_CHUNK = 100
+YAHOO_THREADS = 4  # 100 parallel requests per chunk get "429 Too Many Requests"
+YAHOO_PAUSE = 2  # seconds between chunks
+YAHOO_RETRY_WAIT = 30  # seconds before retrying the symbols a chunk lost
 CACHE_MAX_AGE_DAYS = 7
 WRITE_BATCH = 1_000
 HTTP_TIMEOUT = 60
@@ -246,15 +249,19 @@ def _download_closes(symbols: list[str], start: date, threads: bool) -> pd.DataF
 def fetch_yahoo(symbols: list[str], start: date) -> pd.DataFrame:
     """Daily adjusted closes from Yahoo Finance, one column per symbol (unknown symbols are dropped).
 
-    Threaded downloads sometimes fail on yfinance's own local cache ("database is locked"), so the
-    symbols missing from a chunk are retried once without threads.
+    Yahoo refuses bursts ("Too Many Requests") and threaded downloads sometimes fail on yfinance's own
+    local cache ("database is locked"). So chunks use a few threads with a pause between them, and the
+    symbols a chunk lost are retried once, without threads, after a wait.
     """
     frames = []
     for offset in range(0, len(symbols), YAHOO_CHUNK):
+        if offset:
+            time.sleep(YAHOO_PAUSE)
         chunk = symbols[offset : offset + YAHOO_CHUNK]
-        closes = _download_closes(chunk, start, threads=True)
+        closes = _download_closes(chunk, start, threads=YAHOO_THREADS)
         failed = [symbol for symbol in chunk if symbol not in closes.columns]
         if failed:
+            time.sleep(YAHOO_RETRY_WAIT)
             retry = _download_closes(failed, start, threads=False)
             closes = retry if closes.columns.empty else pd.concat([closes, retry], axis=1)
         frames.append(closes)
@@ -300,13 +307,15 @@ def _is_fresh(path: Path) -> bool:
 
 
 def cached_frame(path: Path, symbols: list[str], fetch: Callable[[list[str]], pd.DataFrame]) -> pd.DataFrame:
-    """Read the parquet cache, download only the symbols it lacks (all of them when stale), save it back."""
-    frame = pd.read_parquet(path) if _is_fresh(path) else pd.DataFrame()
+    """Read the parquet cache, download only the symbols it lacks (all of them when stale), save it back.
+
+    Only symbols that came back with data are kept. An empty answer may be a refusal ("Too Many Requests")
+    as well as an unknown symbol, so it is asked again next time instead of being cached as empty.
+    """
+    frame = pd.read_parquet(path).dropna(axis=1, how="all") if _is_fresh(path) else pd.DataFrame()
     missing = [symbol for symbol in symbols if symbol not in frame.columns]
     if missing:
-        fresh = fetch(missing)
-        # A symbol the source does not know is cached as an empty column so it is not asked again.
-        fresh = fresh.reindex(columns=missing)
+        fresh = fetch(missing).dropna(axis=1, how="all")
         frame = fresh if frame.columns.empty else pd.concat([frame, fresh], axis=1).sort_index()
         frame.columns = [str(column) for column in frame.columns]
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -412,10 +421,18 @@ def write_correlations(client: Neo4jClient, isins: list[str], pairs: list[dict],
 
 
 def weekly_moves(
-    listings: list[Listing], factors: list[FactorSource], settings: Settings, start: date
+    listings: list[Listing],
+    factors: list[FactorSource],
+    settings: Settings,
+    start: date,
+    cache_dir: Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Weekly moves of stocks and market proxies (by ticker) and of factors (by code), from `start`."""
-    cache_dir = Path(settings.data_dir) / "cache"
+    """Weekly moves of stocks and market proxies (by ticker) and of factors (by code), from `start`.
+
+    The cache keeps the history it was first filled with, so a caller that needs a longer history (the ML
+    model's two windows) passes its own `cache_dir`.
+    """
+    cache_dir = cache_dir or Path(settings.data_dir) / "cache"
     yahoo_factors = {factor.source_id: factor.code for factor in factors if factor.source == "yahoo"}
     symbols = sorted({listing.ticker for listing in listings} | {MARKET_EUROPE, MARKET_WORLD} | set(yahoo_factors))
     yahoo = weekly_returns(

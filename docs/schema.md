@@ -48,6 +48,13 @@ An API response or an agent answer carries the truth level of every number it sh
 | `Article` | `url` | `title`, `source` (domain), `published_at` (date) |
 | `Claim` | `claim_id` | `kind` (`SUPPLIES`, `COMPETES_WITH`), `confidence` (0–1), `status` (`hypothesis` / `confirmed` / `rejected`), `sentence`, `model` |
 
+Technical nodes, not part of the market graph: never returned by the API, not in the agent's label allow-list.
+
+| Label | Key | Properties | Role |
+| --- | --- | --- | --- |
+| `GdsRefreshLock` | `name` | `token`, `acquired_at` | Serializes GDS refreshes across API workers and `make gds`. Normally exists only while a refresh runs; one left by a crashed process is taken over after 30 minutes (until then the refresh answers 409). |
+| `MlWriteLock` | `name` | `written_at` | Serializes the writes of ML predictions. Created and deleted inside one transaction, so it is never seen committed. |
+
 Daily price series are **not** stored in the graph: they stay in `data/cache/*.parquet`.
 The graph only stores what is derived from them (`SENSITIVE_TO`, `CORRELATED_WITH`).
 
@@ -84,5 +91,6 @@ Everywhere (API, agent, tests), a node is referenced as `Label:key`:
 
 ## Constraints and indexes
 
-See `scripts/constraints.cypher`. Full-text indexes: `company_name_ft` (name, ticker), `fund_name_ft`
+See `scripts/constraints.cypher`. Range index `company_market_cap` on `Company.market_cap_eur` serves the paginated search (ordering and cursor).
+Full-text indexes: `company_name_ft` (name, ticker), `fund_name_ft`
 (name, ticker), `factor_name_ft` (name, code). Do not rename them: services and the agent depend on them.
