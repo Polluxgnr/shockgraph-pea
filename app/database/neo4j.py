@@ -7,7 +7,7 @@ never build Cypher with f-strings or string concatenation from user input.
 from typing import Any
 
 from fastapi import Request
-from neo4j import Driver, GraphDatabase, RoutingControl
+from neo4j import Driver, GraphDatabase, Query, RoutingControl
 
 from app.config import Settings
 
@@ -28,6 +28,23 @@ class Neo4jClient:
         """Run a read query (routed to a reader) and return the records as dictionaries."""
         records, _, _ = self._driver.execute_query(
             query, parameters_=params or {}, database_=self._database, routing_=RoutingControl.READ
+        )
+        return [record.data() for record in records]
+
+    def read_with_timeout(
+        self, query: str, params: dict[str, Any] | None = None, seconds: float = 5.0
+    ) -> list[dict[str, Any]]:
+        """Run a read query that Neo4j itself stops after `seconds`: the path for LLM-generated Cypher.
+
+        The guardrail bounds the rows (LIMIT), not the work: `MATCH (a:Company), (b:Company), (c:Company)
+        RETURN count(*) AS n LIMIT 1` passes every rule and still builds n³ rows. The server-side transaction
+        timeout closes that gap; Neo4j raises a `ClientError` (`TransactionTimedOut...`) when it fires.
+        """
+        records, _, _ = self._driver.execute_query(
+            Query(query, timeout=seconds),
+            parameters_=params or {},
+            database_=self._database,
+            routing_=RoutingControl.READ,
         )
         return [record.data() for record in records]
 

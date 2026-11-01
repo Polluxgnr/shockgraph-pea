@@ -109,3 +109,49 @@ prefer missing a relation to inventing one.
 
 **Numbers.** 60 companies scanned, 2,727 headlines, 281 filtered, 154 candidates, 145 unresolved, 4 claims,
 1 confirmed, 100 s.
+
+## A4 · Cypher guardrail
+
+**Why typed tools first and generated Cypher only as a fallback?** A typed tool runs a query we wrote, tested and
+profiled, with parameters: the LLM only chooses the tool and the values. Generated Cypher is unbounded in what it
+can express, so it is the exception and goes through the validator.
+
+**Why an allow-list rather than a block-list?** A block-list must think of every attack; an allow-list only of what
+we need. Unknown procedures, labels, clauses are refused by default.
+
+**Why strip strings and comments first?** So that `RETURN "DELETE"` is not refused (a company could be named
+like a keyword) and `DETACH /* x */ DELETE` is not missed.
+
+**Why bound paths at 6 and LIMIT at 100?** The number of paths grows roughly like (average degree)^hops: on a
+correlation graph with ~5 neighbours per stock, 6 hops is already ~15 000 paths per start node; unbounded, it is
+the whole connected component. 100 rows is more than an answer needs and keeps the LLM context small.
+
+**Limits.** Regex, not a parser: it can refuse a valid exotic query (safe direction); it does not judge whether a
+read query is semantically right: the verifier does that on the answer.
+
+**How are patterns hidden in maps and lists found?** Brackets are read innermost first: a bracket right after `-` is
+a relationship (types and length checked), any other is a list (its labels and quantifiers checked, then replaced
+by `0`). Map keys are removed only inside a real map, so `beta: r` is never read as the label `r`.
+
+**Why must every UNION branch have a LIMIT?** In Cypher the LIMIT after the last RETURN applies to the last branch
+only: `... RETURN c.name AS n UNION ... RETURN f.name AS n LIMIT 5` returned 2,470 rows on the dev database. Same
+idea for a LIMIT inside `COUNT { }`: the rule reads the top level only.
+
+**LIMIT bounds the rows, not the work.** `MATCH (a:Company), (b:Company), (c:Company) RETURN count(*) AS n LIMIT 1`
+passes every rule and builds n³ rows. A regex cannot see cost, so the database stops it: `read_with_timeout`
+sends a server-side transaction timeout (5 s), and the READ routing makes Neo4j refuse any write that slipped
+through. Three layers: validator, read transaction, timeout.
+
+**Why refuse every non-ASCII character outside strings?** Neo4j 5.26 reads ten Unicode dashes as `-` and four
+angle brackets as `<`: `(a)–[:X*]–(b)` is a real unbounded path that a validator reading ASCII would take for a
+list. Listing the characters fixes today's parser; refusing all of them also covers tomorrow's. The LLM writes
+ASCII, and company names with accents stay valid inside strings.
+
+**What did the review bring?** Saty's five rounds on #23 found nine bypasses (the ninth: Unicode dashes) (an unbounded quantifier after a
+relationship, a LIMIT expression, a path hidden in a map value, a list inside relationship brackets, a label after
+a comma, UNION, the work bound...). I then looked for more myself and found five (a LIMIT inside `COUNT {}`, a
+comment apostrophe hiding the next line, a procedure called without parentheses, dynamic labels,
+`IN CONCURRENT TRANSACTIONS`). Each is a test case.
+
+Numbers: 50 refused and 18 accepted queries in `tests/test_a_guardrails.py`; every accepted query compiles
+(`EXPLAIN`) on Neo4j in CI.
