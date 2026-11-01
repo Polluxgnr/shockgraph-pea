@@ -39,6 +39,8 @@ OWNERS: dict[str, list[str]] = {
         "app/models/hypotheses.py",
         "app/services/hypotheses.py",
         "app/routers/hypotheses.py",
+        "app/routers/ui.py",
+        "app/ui/*",
         "tests/__init__.py",
         "tests/conftest.py",
         "tests/fixtures/mini_graph.cypher",
