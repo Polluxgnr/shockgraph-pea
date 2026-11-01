@@ -346,9 +346,10 @@ look at the k pairs the model is surest about, how many are right?".
 `POST /api/ask` with a question in French or English. A LangGraph **state graph** runs these steps:
 
 ```
-router --(advice or out of scope)--> refusal
+router --(advice or write request)--> refusal
    |
-planner <--> tools --(ambiguous name)--> clarification question
+planner --(no tool at its first step)--> refusal (out of scope)
+   |  <--> tools --(ambiguous name)--> clarification question
    |           | (6 calls used)
 writer <-------+
    |
@@ -356,9 +357,11 @@ verifier (C5) --> answer + claims + trace
 ```
 
 - **router**: a rule catches "should I buy / dois-je acheter / tu me conseilles..." and refuses with an
-  educational redirect ("I can show what it is exposed to, or simulate a shock"). Then the small model
-  (qwen2.5:3b) decides whether the question is in scope.
-- **planner**: the large model (qwen2.5:7b) sees the 12 tools and asks for the ones it needs.
+  educational redirect ("I can show what it is exposed to, or simulate a shock"). A second rule refuses orders
+  to change the graph ("Delete the claim", "Crée un nœud"): it is read-only.
+- **planner**: the large model (qwen2.5:7b) sees the 12 tools and asks for the ones it needs. If it replies
+  without any tool at its first step, the question is out of scope and gets the refusal. (Until 1 Nov a small
+  model decided scope before the planner: it refused 13 of 20 ordinary questions, see below.)
 - **tools**: run each requested tool, at most 6 per question, and write every call to the `trace`
   (tool, arguments, result, duration, error).
 - **writer**: the large model turns the results into a short answer split into **claims**, each with a
@@ -397,7 +400,7 @@ verifier (C5) --> answer + claims + trace
 | LangGraph state graph | One ReAct loop (`create_react_agent`) | Refusal, clarification and verification are explicit nodes we can test one by one, not hopes in a prompt |
 | 12 typed tools + Cypher fallback | Text-to-Cypher only | A 7B model writes wrong Cypher often; typed tools run tested queries |
 | Rule for advice | Ask the model | A prompt injection can change a model's answer, not a regex |
-| Small model for routing, large for planning and writing | One model | Routing is an easy yes/no; the 3B model answers faster |
+| Scope decided by the planner (no tool fits = out of scope) | A small-model router (qwen2.5:3b) before the planner | Measured on the 30 evaluation questions: the 3B router was wrong on 14, still 6 after a rewritten prompt, and 18 with a one-word verdict; the 7B as router 11. Both tried to guess whether a company exists, which only the tools know. The planner was wrong on 0 of 26, and normal questions save a model call |
 | Temperature 0 | Default | Same question, same plan: reproducible demos and traces |
 | Scripted fake model in tests | A real model in CI | CI must be free, fast and deterministic; the spec forbids a real LLM in tests |
 
@@ -417,7 +420,13 @@ verifier (C5) --> answer + claims + trace
 - *How do you test an agent without a model?* `ScriptedChatModel` plays back a script: "call resolve_factor,
   then simulate_shock, then answer this". Each test fixes what the model does and checks what the graph does
   with it: refusal, clarification, budget, rejection.
-- *What if Ollama is down?* The router lets the question through, the planner stops, and the writer gives its
+- *How good is the agent with the real model?* `python -m scripts.agent_eval --provider real` (Eliott's 30 questions
+  on the mini graph, qwen2.5:7b on a CPU): 5 of 30 on 31 Oct, 14 of 30 after the router fix of 1 Nov. The first
+  run found the router bug (13 of 20 ordinary questions refused). What still fails, read from the traces: the 7B
+  sometimes skips `resolve_company` and copies the example ISIN of the tool descriptions (TotalEnergies), the
+  writer once wrote an evidence ref without its label (`FRTEST000029`), and "EUR USD" does not resolve to
+  EURUSD. Each wrong answer became "I could not verify any statement", never an invented number.
+- *What if Ollama is down?* The rules still refuse advice and writes, the planner stops, and the writer gives its
   fixed answer ("I could not write a reliable answer...") with no claim. No error page, and nothing invented
   (test `test_model_down_gives_a_safe_answer_not_an_error`).
 
