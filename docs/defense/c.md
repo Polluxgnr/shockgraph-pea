@@ -425,7 +425,8 @@ verifier (C5) --> answer + claims + trace
   run found the router bug (13 of 20 ordinary questions refused). What still fails, read from the traces: the 7B
   sometimes skips `resolve_company` and copies the example ISIN of the tool descriptions (TotalEnergies), the
   writer once wrote an evidence ref without its label (`FRTEST000029`), and "EUR USD" does not resolve to
-  EURUSD. Each wrong answer became "I could not verify any statement", never an invented number.
+  EURUSD. In the 4 failures I read, the answer became "I could not verify any statement": the verifier
+  removed what it could not tie to the data, so nothing invented reached the user.
 - *What if Ollama is down?* The rules still refuse advice and writes, the planner stops, and the writer gives its
   fixed answer ("I could not write a reliable answer...") with no claim. No error page, and nothing invented
   (test `test_model_down_gives_a_safe_answer_not_an_error`).
