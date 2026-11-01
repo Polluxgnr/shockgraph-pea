@@ -417,6 +417,11 @@ verifier (C5) --> answer + claims + trace
 - *How do you test an agent without a model?* `ScriptedChatModel` plays back a script: "call resolve_factor,
   then simulate_shock, then answer this". Each test fixes what the model does and checks what the graph does
   with it: refusal, clarification, budget, rejection.
+- *What if the generated Cypher is legal but enormous?* The guardrail (Pollux) checks the shape: read-only,
+  known labels, bounded paths, a LIMIT. It cannot see the work: three `MATCH (c:Company)` make n³ rows before the
+  LIMIT. So `cypher_fallback` runs with a 5 s timeout that Neo4j itself enforces. Measured on the test database:
+  `UNWIND range(1, 300000000)` comes back after 5.1 s as "query stopped after 5 s: too much work", and the
+  model can try a narrower query (`test_a_query_stopped_by_the_timeout_goes_back_to_the_model_as_a_refusal`).
 - *What if Ollama is down?* The router lets the question through, the planner stops, and the writer gives its
   fixed answer ("I could not write a reliable answer...") with no claim. No error page, and nothing invented
   (test `test_model_down_gives_a_safe_answer_not_an_error`).

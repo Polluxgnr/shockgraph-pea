@@ -3,11 +3,12 @@
 import pytest
 from langchain_core.messages import AIMessage
 from langchain_ollama import ChatOllama
+from neo4j.exceptions import Neo4jError
 
 from app.agent import graph as agent_graph
 from app.agent.graph import MAX_TOOL_CALLS, ShockAgent, is_advice_request
 from app.agent.guardrails import ValidationResult
-from app.agent.tools import Services, ambiguous, build_tools, compact_shock, jsonable
+from app.agent.tools import CYPHER_TIMEOUT_SECONDS, Services, ambiguous, build_tools, compact_shock, jsonable
 from app.config import Settings
 from app.llm.client import ScriptedChatModel, get_chat_model, tool_call
 from app.models.companies import CompanySummary, Exposure, FactorSummary
@@ -106,9 +107,25 @@ class FakeValidator:
         return ValidationResult(True, [])
 
 
+class AgentClient(FakeClient):
+    """FakeClient with the timed read that cypher_fallback uses; records the timeout it was given."""
+
+    def __init__(self, rows=None, error=None) -> None:
+        super().__init__(rows=rows)
+        self.error = error
+        self.timeouts: list[float] = []
+
+    def read_with_timeout(self, query, params=None, seconds=5.0):
+        """Like read, or raise the error Neo4j would raise."""
+        self.timeouts.append(seconds)
+        if self.error:
+            raise self.error
+        return self.read(query, params)
+
+
 def make_agent(large_script=None, small_script=None, validator=None) -> tuple[ShockAgent, FakeClient]:
     """An agent on fakes, with scripted small and large models."""
-    client = FakeClient(rows=[{"name": "Petrolia SA"}])
+    client = AgentClient(rows=[{"name": "Petrolia SA"}])
     agent = ShockAgent(client)
     agent.verifier = PassThroughVerifier()
     agent.services = Services(
@@ -270,6 +287,31 @@ def test_valid_generated_cypher_runs_through_the_client():
     answer = agent.ask("Name one company")
     assert answer.trace[0].result == {"rejected": False, "rows": [{"name": "Petrolia SA"}]}
     assert client.queries[0][0] == query
+    assert client.timeouts == [CYPHER_TIMEOUT_SECONDS]
+
+
+def test_a_query_stopped_by_the_timeout_goes_back_to_the_model_as_a_refusal():
+    """Neo4j stops a heavy query after 5 s: the model gets a refusal with the reason, the API never a 500."""
+    query = "MATCH (a:Company), (b:Company), (c:Company) RETURN count(*) AS n LIMIT 1"
+    agent, client = make_agent(large_script=[tool_call("cypher_fallback", {"cypher": query})])
+    client.error = Neo4jError._hydrate_neo4j(  # pylint: disable=protected-access
+        code="Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration", message="timed out"
+    )
+    answer = agent.ask("Count every triple of companies")
+    call = answer.trace[0]
+    assert call.error is None
+    assert call.result == {"rejected": True, "reasons": ["query stopped after 5 s: too much work"]}
+
+
+def test_another_database_error_stays_a_tool_error():
+    """Only the timeout is turned into a refusal; any other error is shown as what it is, in the trace."""
+    query = "MATCH (c:Company) RETURN c.name AS name LIMIT 1"
+    agent, client = make_agent(large_script=[tool_call("cypher_fallback", {"cypher": query})])
+    client.error = Neo4jError._hydrate_neo4j(  # pylint: disable=protected-access
+        code="Neo.ClientError.Statement.SyntaxError", message="bad syntax"
+    )
+    answer = agent.ask("Name one company")
+    assert answer.trace[0].error and "bad syntax" in answer.trace[0].error
 
 
 class Recorder:
