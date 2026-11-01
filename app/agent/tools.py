@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Annotated, Any
 
 from langchain_core.tools import StructuredTool
+from neo4j.exceptions import ClientError
 from pydantic import BaseModel, Field
 
 from app.agent.guardrails import CypherValidator
@@ -28,6 +29,9 @@ from app.services.portfolio import PortfolioService
 from app.services.shocks import MAX_PATH_HOPS, ShockService
 
 RESOLVE_TOOLS = ("resolve_company", "resolve_factor")
+# Generated Cypher gets this long on the server (Neo4jClient.read_with_timeout): the guardrail bounds the rows, not
+# the work, so a legal but heavy query (a cartesian product) is stopped by Neo4j itself.
+CYPHER_TIMEOUT_SECONDS = 5.0
 
 # Argument types with the bounds of the HTTP routes: the model can ask for no more than an API user. A value
 # out of bounds fails validation before the service is called, and the error goes back to the model.
@@ -211,7 +215,8 @@ def build_tools_for(services: Services) -> list[StructuredTool]:
 
     def cypher_fallback(cypher: CypherText) -> dict:
         """Last resort when no other tool fits: a read-only Cypher query, checked by the guardrail first.
-        Use parameters-free, bounded queries with a LIMIT of at most 100."""
+        Use parameters-free, bounded queries with a LIMIT of at most 100, written in ASCII only (aliases
+        without accents: `AS societe`, not `AS société`)."""
         try:
             verdict = services.validator.validate(cypher)
         except NotImplementedError:
@@ -219,7 +224,14 @@ def build_tools_for(services: Services) -> list[StructuredTool]:
             return {"rejected": True, "reasons": ["the Cypher validator is not available"]}
         if not verdict.valid:
             return {"rejected": True, "reasons": verdict.reasons}
-        return {"rejected": False, "rows": jsonable(services.client.read(cypher))}
+        try:
+            rows = services.client.read_with_timeout(cypher, seconds=CYPHER_TIMEOUT_SECONDS)
+        except ClientError as error:
+            if "TransactionTimedOut" not in (error.code or ""):
+                raise  # any other database error goes to the trace as a tool error
+            # Back to the model like a refusal, so it can try a narrower query; never a 500
+            return {"rejected": True, "reasons": [f"query stopped after {CYPHER_TIMEOUT_SECONDS:g} s: too much work"]}
+        return {"rejected": False, "rows": jsonable(rows)}
 
     functions = [
         resolve_company,
