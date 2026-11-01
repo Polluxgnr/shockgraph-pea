@@ -20,7 +20,7 @@ CentraleSupélec AIDAMS GraphDB project, October 2026, by Pollux, Eliott and Sat
 
 ## Contents
 
-[What it does](#what-it-does) · [Quick start](#quick-start) · [Architecture](#architecture) ·
+[What it does](#what-it-does) · [Quick start](#quick-start) · [Two-minute tour](#two-minute-tour) · [Architecture](#architecture) ·
 [Graph model](#graph-model) · [Data sources](#data-sources) · [API](#api) ·
 [Design choices](#design-choices-and-why) · [Results](#results-in-numbers) · [Limits](#limits) ·
 [Next steps](#what-we-would-do-next) · [Engineering](#how-we-worked) · [Repository map](#repository-map)
@@ -57,6 +57,31 @@ explained path, network, agent) · Swagger: http://localhost/docs · Neo4j brows
 `make help` lists every command.
 
 The API image is also published: `docker pull ghcr.io/polluxgnr/shockgraph-api:latest`.
+
+## Two-minute tour
+
+Everything below runs on the demo page, http://localhost: plain HTML and JavaScript served by the API, no build step
+and no external script. Each tab calls the public API, so what you see is what `curl` would return.
+
+1. **"Student portfolio"** fills the positions: Amundi PEA Monde (EWLD) 3,000 €, Amundi PEA S&P 500 (PSP5) 2,000 €,
+   TotalEnergies 500 €, Airbus 500 €. The portfolio is sent with each request and never stored.
+2. **Portfolio → Run the x-ray** (`POST /api/portfolio/xray`). Each ETF is followed to the companies of the index
+   it tracks, and a company held through both ETFs is summed into one line: the US share, the weight of the 10
+   largest lines, countries, sectors, and the portfolio's betas weighted by the euros invested.
+3. **Shock → Brent +20 %, depth 2** (`POST /api/shocks/simulate`). The impact in % and in € on each position. Every
+   line has a truth badge: blue `estimate` (beta × shock), green `fact` (declared link, direction only), orange
+   `hypothesis` (news, never a number).
+4. **"path" on a line** (`GET /api/paths`). The bounded shortest path from Brent to that company, each link coloured
+   by its truth level: an explanation is only as strong as its weakest link.
+5. **Network → Load the network** (`/api/network/systemic`, `/clusters`). PageRank and Louvain communities on the
+   residual correlation network. Clicking any company opens its exposures, ML predictions and similar stocks.
+6. **Ask the agent** (`POST /api/ask`, needs the `X-API-Key` from `.env`). The answer, its claims with badges, the
+   claims the verifier removed and why, and the trace of every tool call. "Should I sell my S&P 500 ETF?" is
+   refused before any model call. Below it, **Cypher guardrail** (`POST /api/agent/validate-cypher`) shows a write,
+   an unbounded path, a `UNION` without `LIMIT` and a Unicode dash all refused, each with its reason.
+
+The agent runs a 7B model locally: on a CPU an answer can take minutes (the page counts the seconds, and Nginx stops
+waiting after 3 minutes); on a GPU it takes seconds.
 
 ## Architecture
 
@@ -187,9 +212,9 @@ alternatives we rejected and the questions we expect.
 | Network (C2) | 1,499 correlated stocks in 139 Louvain communities, PageRank and 64-d FastRP embeddings |
 | ML (C3, temporal split) | AUC-PR 0.573 for gradient boosting vs 0.270 for the industry-share baseline; precision@100 1.00; 676 predictions written ([`docs/ml_report.md`](docs/ml_report.md)) |
 | Index effect (20,000 companies) | ticker lookup 40,002 → 3 DB hits; `SKIP` page 200: 60,001 → 8,003 DB hits |
-| Cypher guardrail | 50 refused queries (each with its expected reason), 18 accepted (each `EXPLAIN`-ed on Neo4j) |
+| Cypher guardrail | 50 refused queries (each with its expected reason), 18 accepted (each `EXPLAIN`-ed on Neo4j); 9 bypasses found in review, each now a test |
 | Agent evaluation | 30 questions including 10 traps (advice, writes, invented company, causation, out of scope): [`docs/agent_eval.md`](docs/agent_eval.md) |
-| Tests | 350+ tests (unit, API, Neo4j + GDS, containers), coverage 82 % (≥ 60 % enforced in CI), pylint 10/10 |
+| Tests | 500+ tests (unit, API, Neo4j + GDS, containers, demo page), coverage ≥ 60 % enforced in CI (82 % at the last measure), pylint 10/10 |
 
 ## Limits
 
@@ -216,7 +241,7 @@ Said plainly, because a model of the economy that hides its limits is worse than
 - Size the declared links (share of costs or revenues from annual reports) so they can carry a number.
 - Regime-aware betas (rolling windows, a stress period) and confidence intervals in the API.
 - Store the KNN of the embeddings as relationships when the universe grows beyond a few thousand stocks.
-- A small web front end for students on top of the API.
+- Stream the agent's steps to the demo page, so a slow local model shows progress instead of one long wait.
 
 ## How we worked
 
@@ -224,7 +249,7 @@ Said plainly, because a model of the economy that hides its limits is worse than
   refuses a commit outside it; a change in someone else's file goes through an issue.
 - **One task = one issue = one branch = one PR.** `main` is protected: CI green and one approval, merge commits only
   so each commit stays visible. Reviews rotate (A by C, B by A, C by B) with at least two specific comments; the
-  guardrail PR went through four review rounds and every bypass found became a test.
+  guardrail PR went through six review rounds and each of the nine bypasses found became a test.
 - **Hooks**: black, pylint ≥ 9.5, detect-secrets, no `.env` or data files, conventional commit messages.
 - **CI**: lint, tests on a real Neo4j + GDS service with the mini graph (`tests/fixtures/`), and image publication
   to GHCR. Tests never call a real LLM (`LLM_PROVIDER=fake`).
