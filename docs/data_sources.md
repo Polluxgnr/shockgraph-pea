@@ -39,7 +39,7 @@ limit, a FRED key replaces the public CSV export. Each step of `python -m script
 | A1 universe | 46–65 s (first OpenFIGI pass ~55 min without key) | 2,466 companies (305 PEA-eligible), 66 countries, 11 sectors, 75 industries, 7 indexes, 14 funds, 5,658 `CONSTITUENT`; Yahoo symbol found for 2,371 companies (96 %); CAC 40 resolved 40/40, Nasdaq-100 98/101 |
 | A2 declared | 58–72 s | 12 factors; 28 industry links (22 `CONSUMES`, 6 `PRODUCES`); 1,471 companies found on Wikidata; 58 company `PRODUCES`; 1,386 products left unmatched (counted, not guessed) |
 | A3 news | 100 s | 2,727 headlines; 281 filtered as corporate finance; 154 candidate pairs; 145 unresolved; 4 claims, all correct on reading; 1 confirmed |
-| C1 betas | (role C) | (role C) |
+| C1 betas | dominated by the Yahoo downloads; regressions take seconds, the correlation matrix tens of seconds (`docs/defense/c.md`) | 2,109 stocks with usable weekly prices; 3,579 significant `SENSITIVE_TO` (market-controlled, 3 years); 3,818 `CORRELATED_WITH` on residuals |
 
 ## Reproduce
 
