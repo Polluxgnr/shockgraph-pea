@@ -63,3 +63,4 @@ One line per decision not settled by AGENTS.md: date, decision, why.
 - 2026-10-28 · C6 · Demo portfolio: 4,000 EUR of Amundi PEA Monde (CW8, MSCI World) and 1,000 EUR each of TotalEnergies, Airbus and BNP Paribas: a typical student PEA, one stock per kind of exposure (oil, airline, bank).
 - 2026-10-28 · C6 · The notebook is saved with its outputs (the jury reads it on GitHub) and the drawing also goes to `docs/img/c_subgraph_totalenergies.png`.
 - 2026-10-28 · C6 · The agent cell checks that Ollama answers first and prints how to start it otherwise, so the notebook still runs to the end without a model.
+- 2026-10-31 · C6 · The agent question is the TotalEnergies impact of Brent +20 %, not "which PEA stocks are most affected": the shock has no PEA filter, so that answer listed non-PEA companies.

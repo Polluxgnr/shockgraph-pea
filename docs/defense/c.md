@@ -528,7 +528,7 @@ It goes through the whole project once on the dev database, calling the same ser
 label and relationship counts, the look-through of a student PEA, a Brent +20 % shock on it, the GDS refresh and
 its results, a drawing around TotalEnergies, the ML numbers against the baseline, and one question to the agent.
 
-### What the numbers say (run of 28 October 2026)
+### What the numbers say (run of 31 October 2026, same numbers as on 28 October)
 
 - The graph: 2,466 companies, 14 funds, 12 factors; 3,579 `SENSITIVE_TO`, 3,818 `CORRELATED_WITH`,
   676 `PREDICTED_SENSITIVITY`.
@@ -541,6 +541,9 @@ its results, a drawing around TotalEnergies, the ML numbers against the baseline
   and gas as top factors. The companies most similar to TotalEnergies (FastRP) are Eni, OMV, Galp, Equinor and
   Repsol: the method finds the oil majors without being told what they do.
 - ML: AUC-PR 0.573 against 0.270 for the baseline, precision@100 of 1.00 (see the C3 section).
+- Agent: "If Brent rises 20 %, what is the estimated impact on TotalEnergies?" gives one `simulate_shock` call
+  and one claim, "TotalEnergies: 7.732 % for Brent rise", `estimate`, evidence `Factor:BRENT` and
+  `Company:FR0000120271`, kept by the verifier: the same 7.732 % as the shock cell above.
 
 ### Choices and rejected alternatives
 
@@ -555,5 +558,8 @@ its results, a drawing around TotalEnergies, the ML numbers against the baseline
   have no significant Brent beta. That is the honest answer: a diversified PEA barely depends on oil.
 - *Is +90 EUR what will happen?* No. It is what the past weekly co-movement implies, labelled `estimate`.
   It describes the past and does not prove causation.
-- *Why does the agent cell say Ollama is not running?* The model runs locally; without it the cell explains how to
-  start it instead of failing. The video shows it with the model running.
+- *What if Ollama is not running?* The model runs locally; without it the agent cell explains how to start it
+  instead of failing, and the rest of the notebook still runs. The saved outputs come from a run with the model.
+- *Why ask about TotalEnergies and not "which PEA stocks"?* The shock has no PEA filter, so the answer to
+  "which PEA stocks" also lists non-PEA companies. The TotalEnergies question has one checkable answer, the same
+  number as the shock cell.
