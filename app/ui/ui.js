@@ -89,6 +89,10 @@ async function api(path, options = {}) {
   } catch {
     data = text;
   }
+  if (response.status === 504) {
+    // Nginx gives up after 3 min (proxy_read_timeout) and answers in HTML, so there is no detail to show.
+    throw new Error("504 · no answer within the proxy's 3 min. On a CPU the 7b model is slow: ask a shorter question or use a GPU machine.");
+  }
   if (!response.ok) {
     const detail = data && data.detail ? data.detail : `HTTP ${response.status}`;
     const fields = data && Array.isArray(data.errors) ? data.errors.map((item) => `${item.field}: ${item.message}`).join("; ") : "";
@@ -100,12 +104,19 @@ async function api(path, options = {}) {
 /** Run a task behind a button: loading state, result or error in the target, button re-enabled. */
 async function run(button, target, task) {
   button.disabled = true;
-  show(target, el("p", { class: "muted" }, "Loading…"));
+  const started = Date.now();
+  const loading = el("p", { class: "muted" }, "Loading…");
+  show(target, loading);
+  // A local agent can take minutes: count the seconds so a slow answer does not look like a frozen page.
+  const timer = setInterval(() => {
+    loading.textContent = `Loading… ${Math.round((Date.now() - started) / 1000)} s`;
+  }, 1000);
   try {
     show(target, await task());
   } catch (error) {
     show(target, errorBox(error));
   } finally {
+    clearInterval(timer);
     button.disabled = false;
   }
 }
@@ -531,6 +542,8 @@ function claimBlock(claim, removed = false) {
     " ",
     claim.text,
     claim.evidence.length ? el("div", { class: "refs" }, claim.evidence.join(" · ")) : null,
+    // Set by the verifier: why the claim was removed, or why its truth level was lowered.
+    claim.reason ? el("div", { class: "reason" }, `Verifier: ${claim.reason}`) : null,
   );
 }
 

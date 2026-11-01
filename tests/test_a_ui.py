@@ -55,6 +55,13 @@ def test_data_is_never_inserted_as_html():
     assert "innerHTML" not in SCRIPT and "outerHTML" not in SCRIPT and "insertAdjacentHTML" not in SCRIPT
 
 
+def test_agent_tab_shows_the_verifier_reason_and_a_proxy_timeout():
+    """A removed claim says why, and a 504 from Nginx (HTML body) still gives a readable message."""
+    assert "claim.reason" in SCRIPT
+    assert "response.status === 504" in SCRIPT
+    assert "clearInterval(timer)" in SCRIPT
+
+
 def test_api_key_is_kept_in_the_tab_only():
     """The agent key lives in sessionStorage, never in localStorage."""
     assert "localStorage" not in SCRIPT and "sessionStorage" in SCRIPT
