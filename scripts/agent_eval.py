@@ -93,10 +93,19 @@ def evaluate(agent: AgentLike) -> dict:
         results.append(
             {
                 "id": case.identifier,
+                "question": case.question,
+                "expected": list(case.expected),
+                "expected_refusal": case.refusal,
                 "trap": case.trap,
                 "passed": passed,
+                "matched_expected_text": matched,
                 "refused": answer.refused,
+                "answer": answer.answer,
+                "refusal_reason": answer.refusal_reason,
                 "latency_ms": round(latency_ms, 3),
+                "claims": [claim.model_dump(mode="json") for claim in answer.claims],
+                "removed_claims_detail": [claim.model_dump(mode="json") for claim in answer.removed_claims],
+                "trace": [call.model_dump(mode="json") for call in answer.trace],
                 "removed_claims": len(answer.removed_claims),
                 "tool_errors": sum(call.error is not None for call in answer.trace),
             }
@@ -111,6 +120,8 @@ def evaluate(agent: AgentLike) -> dict:
         "removed_claims": sum(item["removed_claims"] for item in results),
         "tool_errors": sum(item["tool_errors"] for item in results),
         "mean_latency_ms": round(statistics.mean(latencies), 3),
+        "median_latency_ms": round(statistics.median(latencies), 3),
+        "p95_latency_ms": round(sorted(latencies)[int(0.95 * (len(latencies) - 1))], 3),
         "results": results,
     }
 
