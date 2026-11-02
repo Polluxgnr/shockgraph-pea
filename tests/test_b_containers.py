@@ -29,6 +29,15 @@ def test_compose_keeps_api_private_and_waits_for_dependencies():
     assert "API_KEY" in services["api"]["environment"]
 
 
+def test_nginx_healthcheck_uses_ipv4_loopback():
+    """Alpine may resolve localhost to ::1 while Nginx listens on IPv4 inside the container."""
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    command = compose["services"]["nginx"]["healthcheck"]["test"]
+
+    assert "http://127.0.0.1/nginx-health" in command
+    assert all("localhost" not in item for item in command)
+
+
 def test_nginx_enforces_body_auth_route_and_rate_limits():
     """The public proxy bounds bodies and rate-limits the protected slow endpoint."""
     config = (ROOT / "nginx" / "nginx.conf").read_text(encoding="utf-8")

@@ -1,8 +1,8 @@
 """LangGraph agent (role C): router, planner, tools, writer, verifier.
 
-    START -> router --(advice / out of scope)--> refuse -> END
-               |
-               v
+    START -> router --(advice / write request)--> refuse -> END
+               |                                     ^
+               v                                     | (no tool fits: out of scope)
             planner <--> tools --(ambiguous name)--> clarify -> END
                |           |
                v           | (6 tool calls used)
@@ -11,20 +11,23 @@
                v
             verifier -> END
 
-The advice check is a rule, not a model call: no prompt can talk the agent into a recommendation. The model
-only chooses tools and their arguments; every number comes from a service, and the trace keeps each call.
+The advice and write checks are rules, not model calls: no prompt can talk the agent into a recommendation or a
+write. Scope is decided by the planner itself: a question for which it calls no tool at its first step is out of
+scope. (A separate small-model router refused 13 of 20 ordinary questions in the evaluation, see
+docs/decisions/c.md.) The model only chooses tools and their arguments; every number comes from a service, and the
+trace keeps each call.
 """
 
 import json
 import re
 import time
-from typing import Any, Literal, TypedDict
+from typing import Any, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel
 
-from app.agent.prompts import PLANNER_PROMPT, ROUTER_PROMPT, WRITER_PROMPT
+from app.agent.prompts import PLANNER_PROMPT, WRITER_PROMPT
 from app.agent.tools import RESOLVE_TOOLS, Services, build_tools_for
 from app.agent.verifier import AnswerVerifier
 from app.config import get_settings
@@ -56,6 +59,16 @@ ADVICE_PATTERNS = [
     r"\b(quoi|quel|quelle|quels|quelles)\b.{0,30}\b(acheter|vendre)\b",
 ]
 ADVICE = re.compile("|".join(ADVICE_PATTERNS), re.IGNORECASE)
+# Requests to change the graph: an order to create, change or delete, with something of the database as its object
+# ("Delete the rejected Vela claim."). Questions about what changed ("Which companies were added?") are not orders.
+WRITE_REQUEST = re.compile(
+    r"(^|[.!?;:]\s*)((please|can you|could you|peux-tu|pouvez-vous)\s+)?"
+    r"(create|add|insert|delete|remove|drop|update|modify|rename|merge|write|cr[ée]e[rz]?|ajoute[rz]?|"
+    r"supprime[rz]?|efface[rz]?|modifie[rz]?|renomme[rz]?)\b"
+    r".{0,40}\b(nodes?|relationships?|edges?|claims?|labels?|propert(y|ies)|database|graph|neo4j|indexe?s?|"
+    r"constraints?|records?|n(oe|œ)uds?|relations?|liens?|base|graphe|propri[ée]t[ée]s?)\b",
+    re.IGNORECASE,
+)
 FRENCH = re.compile(r"\b(le|la|les|des|est|quel|quelle|quelles|quels|si|mon|ma|mes|je|dois|faut|qui|sont)\b", re.I)
 
 
@@ -64,16 +77,14 @@ def is_advice_request(question: str) -> bool:
     return ADVICE.search(question) is not None
 
 
+def is_write_request(question: str) -> bool:
+    """True when the question orders a change to the graph, which is read-only here."""
+    return WRITE_REQUEST.search(question) is not None
+
+
 def is_french(question: str) -> bool:
     """Rough guess, enough to answer a refusal in the user's language: accents or French small words."""
     return bool(re.search(r"[àâçéèêëîïôûùœ]", question, re.I)) or len(FRENCH.findall(question)) >= 2
-
-
-class RouteDecision(BaseModel):
-    """Router output (small model)."""
-
-    route: Literal["answer", "out_of_scope"]
-    reason: str = ""
 
 
 class WrittenAnswer(BaseModel):
@@ -99,16 +110,16 @@ class AgentState(TypedDict, total=False):
 class ShockAgent:
     """Answers questions about exposures and shocks using graph tools only.
 
-    Nodes: router (out of scope or advice request leads to a refusal with a reason; ambiguous name
-    leads to a clarification question), planner (large model with bound tools, at most MAX_TOOL_CALLS
-    calls), tools, writer (structured `AgentAnswer`), verifier (app/agent/verifier.py).
+    Nodes: router (an advice or write request leads to a refusal with a reason), planner (large model with
+    bound tools, at most MAX_TOOL_CALLS calls; no tool at its first step means out of scope, a refusal), tools
+    (an ambiguous name leads to a clarification question), writer (structured `AgentAnswer`), verifier
+    (app/agent/verifier.py).
     """
 
     def __init__(self, client: Neo4jClient) -> None:
         self.client = client
         settings = get_settings()
         self.services = Services.for_client(client)
-        self.small = get_chat_model(settings, "small")
         self.large = get_chat_model(settings, "large")
         self.verifier = AnswerVerifier(client)
 
@@ -142,18 +153,13 @@ class ShockAgent:
     # --- nodes -----------------------------------------------------------------------------------------
 
     def route(self, state: AgentState) -> dict:
-        """Advice requests by rule; scope by the small model (in scope when the model fails)."""
+        """Advice and write requests by rule, before any model; scope is left to the planner (see `plan`)."""
         question = state["question"]
         if is_advice_request(question):
             return {"route": "advice", "reason": "investment advice"}
-        try:
-            decision = self.small.with_structured_output(RouteDecision).invoke(
-                [SystemMessage(ROUTER_PROMPT), HumanMessage(question)]
-            )
-        except Exception:  # pylint: disable=broad-exception-caught
-            # The scope check is a convenience, not a safety rule: planning is still bounded by the tools.
-            return {"route": "answer", "reason": "router unavailable"}
-        return {"route": decision.route, "reason": decision.reason}
+        if is_write_request(question):
+            return {"route": "write", "reason": "write request: the graph is read-only"}
+        return {"route": "answer", "reason": ""}
 
     def refuse(self, state: AgentState) -> dict:
         """A refusal that says why and what the tool can do instead."""
@@ -168,12 +174,20 @@ class ShockAgent:
                 "no investment advice. I can show what a stock is exposed to, or simulate a shock "
                 '(for example "what if Brent rises 20 %?").'
             )
+        elif state["route"] == "write":
+            text = (
+                "Le graphe est en lecture seule ici : je ne peux rien créer, modifier ni supprimer. Je peux montrer "
+                "ce qu'il contient, par exemple à quoi une action est exposée."
+                if french
+                else "The graph is read-only here: I can't create, change or delete anything. I can show what is in "
+                "it, for example what a stock is exposed to."
+            )
         else:
             text = (
-                "Cette question sort du périmètre de ShockGraph PEA (expositions des actions et ETF du PEA aux "
+                "Cette question est hors du périmètre de ShockGraph PEA (expositions des actions et ETF du PEA aux "
                 "matières premières, devises et taux, et chocs sur ces facteurs)."
                 if french
-                else "This question is outside what ShockGraph PEA covers (exposures of PEA stocks and ETFs to "
+                else "This question is out of scope for ShockGraph PEA (exposures of PEA stocks and ETFs to "
                 "commodities, currencies and rates, and shocks on those factors)."
             )
         return {"answer": AgentAnswer(answer=text, refused=True, refusal_reason=state["reason"] or state["route"])}
@@ -185,12 +199,19 @@ class ShockAgent:
             response = self.large.bind_tools(list(tools.values())).invoke(messages)
         except Exception:  # pylint: disable=broad-exception-caught
             # Ollama down or a malformed tool call: stop planning; the writer then gives its safe answer.
-            response = AIMessage(content="")
+            return {"messages": [*messages, AIMessage(content="")]}
+        if not state["trace"] and not response.tool_calls and str(response.content).strip():
+            # The model replied but no tool fits the question: out of scope (weather, health...). Measured on the
+            # 30 evaluation questions: no tool exactly on the 2 off-topic ones, a tool on every other one. An empty
+            # reply is a failure, not a verdict: the writer then gives its safe answer.
+            return {"messages": [*messages, response], "route": "out_of_scope", "reason": "no tool fits the question"}
         return {"messages": [*messages, response]}
 
     @staticmethod
     def after_plan(state: AgentState) -> str:
-        """More tools while the model asks for some and the budget allows; then the writer."""
+        """Out of scope: refuse. More tools while the model asks for some and the budget allows; then the writer."""
+        if state["route"] == "out_of_scope":
+            return "refuse"
         last = state["messages"][-1]
         wants_tools = isinstance(last, AIMessage) and bool(last.tool_calls)
         return "tools" if wants_tools and len(state["trace"]) < MAX_TOOL_CALLS else "writer"

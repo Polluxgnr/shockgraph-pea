@@ -1,7 +1,7 @@
 # The agent
 
 `POST /api/ask` answers a question in French or English about exposures and shocks. A LangGraph state graph
-(`app/agent/graph.py`) runs a local model through Ollama (qwen2.5:7b to plan and write, qwen2.5:3b to route),
+(`app/agent/graph.py`) runs a local model through Ollama (qwen2.5:7b to plan, write and judge advice),
 and every number of the answer comes from a tool that calls one of our tested services.
 
 ## The graph
@@ -10,8 +10,9 @@ and every number of the answer comes from a tool that calls one of our tested se
 flowchart TD
     Q([question]) --> R{router}
     R -- "buy / sell request (rule)" --> X[refusal + what the app can do instead]
-    R -- "out of scope (small model)" --> X
-    R -- in scope --> P[planner<br/>large model + 12 tools]
+    R -- "write request (rule)" --> X
+    R -- otherwise --> P[planner<br/>large model + 12 tools]
+    P -- "no tool fits: out of scope" --> X
     P -- tool calls --> T[tools<br/>at most 6 calls]
     T -- "ambiguous name" --> C[clarification question]
     T -- "more to find" --> P
@@ -21,9 +22,12 @@ flowchart TD
     V --> A([answer + claims + removed claims + trace])
 ```
 
-- **Router.** A rule catches buy or sell requests ("should I buy", "dois-je acheter", "tu me conseilles")
-  before any model sees them. Then the small model decides whether the question is in scope.
-- **Planner.** The large model chooses tools and their arguments. It never writes a number itself.
+- **Router.** Two rules, before any model sees the question: buy or sell requests ("should I buy",
+  "dois-je acheter", "tu me conseilles") and orders to change the graph ("Delete the claim", "Crée un nœud"),
+  which is read-only.
+- **Planner.** The large model chooses tools and their arguments. It never writes a number itself. If it replies
+  without calling any tool at its first step, no tool fits the question, and the answer is the out-of-scope
+  refusal (weather, health...).
 - **Tools.** Each call is recorded in the `trace` with its arguments, its full result, its duration and its
   error. A name that matches several companies stops the run with a question.
 - **Writer.** The large model turns the results into claims, each with a truth level (`fact`, `estimate`,
