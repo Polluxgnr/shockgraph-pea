@@ -16,8 +16,8 @@ ModelSize = Literal["small", "large"]
 def get_chat_model(settings: Settings, size: ModelSize = "large"):
     """Return a LangChain chat model.
 
-    `llm_provider="ollama"` gives ChatOllama (`ollama_model_small` for routing/extraction,
-    `ollama_model_large` for planning/writing); `"fake"` gives a deterministic scripted model able to
+    `llm_provider="ollama"` gives ChatOllama (`ollama_model_small` for the news extraction of the seed,
+    `ollama_model_large` for the agent: planning, writing, advice judge); `"fake"` gives a deterministic scripted model able to
     emit tool calls, used by every test and by CI (never a real model there).
     """
     if settings.llm_provider == "fake":
