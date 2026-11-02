@@ -33,7 +33,7 @@ CentraleSupélec AIDAMS GraphDB project, October 2026, by Pollux, Eliott and Sat
 | "Oil +20 %: what happens to my PEA?" | `POST /api/shocks/simulate` | Direct impact `beta × shock` on every company (truth `estimate`), declared producers / consumers (truth `fact`), then one hop further through news-based supplier links (truth `hypothesis`, no number) |
 | "Why is Airbus linked to oil?" | `GET /api/paths` | Bounded `shortestPath` (≤ 6 hops) between any two nodes, each hop tagged with its truth level |
 | "Which stocks move together?" | `GET /api/network/clusters`, `/systemic`, `/companies/{isin}/similar` | GDS on the residual correlation network: Louvain communities, PageRank, FastRP embeddings |
-| "What moves TotalEnergies?" (free text) | `POST /api/ask` | LangGraph agent: rule-based advice refusal, typed tools, a guarded Cypher fallback, a verifier that removes unsupported claims |
+| "What moves TotalEnergies?" (free text) | `POST /api/ask` | LangGraph agent: advice and write requests refused by rule, typed tools, a guarded Cypher fallback, a verifier that removes unsupported claims |
 
 Every number in an answer carries its `truth` (`fact`, `estimate`, `prediction`, `hypothesis`) and the evidence
 references it comes from (`Company:FR0000120271`, `Factor:BRENT`, `Claim:c1`).
@@ -47,7 +47,7 @@ Requirements: Docker Desktop (8 GB RAM or more for the local LLM), Python 3.11+,
 git clone https://github.com/Polluxgnr/shockgraph-pea.git && cd shockgraph-pea
 make env install        # .env from .env.example (edit the passwords) + .venv + git hooks
 make docker-run         # nginx :80 -> api -> neo4j + gds, ollama (each starts once the one it needs is healthy)
-make llm-pull           # once: qwen2.5 7b and 3b for the agent (~7 GB)
+make llm-pull           # once: qwen2.5 7b for the agent, 3b for the news extraction (~7 GB)
 make seed               # real data: about 3 minutes with warm caches (first OpenFIGI pass ~55 min without a key)
 make gds                # communities, PageRank and embeddings
 ```
@@ -194,8 +194,11 @@ alternatives we rejected and the questions we expect.
 - **Generated Cypher passes three layers**: an allow-list validator (read-only clauses, known labels, bounded
   paths, a `LIMIT` in every `UNION` branch: [`docs/guardrails.md`](docs/guardrails.md)), a READ transaction that
   the server refuses to write in, and a server-side timeout.
-- **Advice is refused by a rule, before any model call**: a prompt can talk a model into a recommendation, not a
-  regular expression.
+- **Advice and write requests are refused by rules, before any model call**: a prompt can talk a model into a
+  recommendation or a write, not a regular expression.
+- **The planner decides scope, not a separate router.** A question for which the 7B calls no tool is out of scope.
+  A 3B router refused 13 of 20 ordinary questions in the evaluation ("What is Varenne's EURUSD beta?"); the planner,
+  which sees the tools, got the scope of all 26 measured questions right.
 - **A verifier checks every claim against the trace and the database**: each number tied to its row, evidence
   references that exist, a truth level never stated more strongly than its source, no causal wording on an
   estimate, and an advice judge (qwen2.5:7b against the MiFID II / AMF definition of investment advice).
@@ -213,7 +216,7 @@ alternatives we rejected and the questions we expect.
 | ML (C3, temporal split) | AUC-PR 0.573 for gradient boosting vs 0.270 for the industry-share baseline; precision@100 1.00; 676 predictions written ([`docs/ml_report.md`](docs/ml_report.md)) |
 | Index effect (20,000 companies) | ticker lookup 40,002 → 3 DB hits; `SKIP` page 200: 60,001 → 8,003 DB hits |
 | Cypher guardrail | 50 refused queries (each with its expected reason), 18 accepted (each `EXPLAIN`-ed on Neo4j); 9 bypasses found in review, each now a test |
-| Agent evaluation | 30 questions including 10 traps (advice, writes, invented company, causation, out of scope): [`docs/agent_eval.md`](docs/agent_eval.md) |
+| Agent evaluation | 30 questions including 10 traps (advice, writes, invented company, causation, out of scope). Real model (qwen2.5:7b, CPU): **5/30 with the 3B router, 14/30 and 6/10 traps after the planner took over scope**: [`docs/agent_eval.md`](docs/agent_eval.md) |
 | Tests | 500+ tests (unit, API, Neo4j + GDS, containers, demo page), coverage ≥ 60 % enforced in CI (82 % at the last measure), pylint 10/10 |
 
 ## Limits
@@ -232,7 +235,10 @@ Said plainly, because a model of the economy that hides its limits is worse than
 - **A regex validator is not a Cypher parser.** It refuses some exotic but valid queries (the safe direction), and
   the timeout, not the validator, bounds the work of a heavy legal query.
 - **A 7B local model is slower and weaker than a hosted one.** The typed tools and the verifier are what keep its
-  answers grounded, not the model.
+  answers grounded, not the model. Read from the failed traces: it sometimes skips `resolve_company` and copies the
+  example ISIN of a tool description, and "EUR USD" does not resolve to `EURUSD`. On a CPU an answer takes minutes.
+- **Scope by the planner has a cost**: a general question it answers without a tool ("What is a beta?") is refused
+  as out of scope, and the write rule refuses a few ordinary phrasings ("Update me on the claims about Airbus").
 
 ## What we would do next
 
