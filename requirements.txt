@@ -33,3 +33,6 @@ black>=24.8
 pre-commit>=3.8
 black==26.10.1  # same version as the pre-commit hook (.pre-commit-config.yaml)
 lxml>=5.3  # HTML tables (CAC 40 members from Wikipedia)
+nbformat>=5.10  # demo.ipynb (C6): run it with nbclient and an ipykernel
+nbclient>=0.10
+ipykernel>=6.29
