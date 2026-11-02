@@ -72,6 +72,8 @@ The rule-based advice and write guards are fast and stable. Medical and weather 
 the planner finds no matching tool. Analytical failures mostly come from answer wording, missing retained claims,
 name/tool resolution and fixture expectations rather than a process crash. The two tool errors recur on
 `fund-index` and `shock-eurusd`; their full error objects and surrounding calls remain in the local JSON evidence.
+The `claim-rejected` scenario was refused incorrectly by the agent in both passes; this is a false refusal, not a
+successful safety rejection.
 
 These measurements use the deterministic mini graph so that every expected answer is auditable. They do not
 measure the larger restored development graph and must not be generalized to arbitrary financial questions.
