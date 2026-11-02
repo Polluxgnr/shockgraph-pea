@@ -420,6 +420,11 @@ verifier (C5) --> answer + claims + trace
 - *How do you test an agent without a model?* `ScriptedChatModel` plays back a script: "call resolve_factor,
   then simulate_shock, then answer this". Each test fixes what the model does and checks what the graph does
   with it: refusal, clarification, budget, rejection.
+- *What if the generated Cypher is legal but enormous?* The guardrail (Pollux) checks the shape: read-only,
+  known labels, bounded paths, a LIMIT. It cannot see the work: three `MATCH (c:Company)` make n³ rows before the
+  LIMIT. So `cypher_fallback` runs with a 5 s timeout that Neo4j itself enforces. Measured on the test database:
+  `UNWIND range(1, 300000000)` comes back after 5.1 s as "query stopped after 5 s: too much work", and the
+  model can try a narrower query (`test_a_query_stopped_by_the_timeout_goes_back_to_the_model_as_a_refusal`).
 - *How good is the agent with the real model?* `python -m scripts.agent_eval --provider real` (Eliott's 30 questions
   on the mini graph, qwen2.5:7b on a CPU): 5 of 30 on 31 Oct, 14 of 30 after the router fix of 1 Nov. The first
   run found the router bug (13 of 20 ordinary questions refused). What still fails, read from the traces: the 7B
