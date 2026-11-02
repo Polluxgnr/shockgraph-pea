@@ -1,5 +1,7 @@
 """Tests of the PROFILE / EXPLAIN helpers of Neo4jClient (role A), used by the benchmarks (B6)."""
 
+import time
+
 import pytest
 from neo4j import RoutingControl
 from neo4j.exceptions import ClientError
@@ -66,9 +68,18 @@ def test_read_with_timeout_returns_rows(neo4j_client):
 
 @pytest.mark.neo4j
 def test_read_with_timeout_stops_heavy_work(neo4j_client):
-    """A query that passes the guardrail but does a lot of work is stopped by the server, not by the client."""
+    """A query that passes the guardrail but does a lot of work is stopped by the server, not by the client.
+
+    Neo4j checks timeouts every `db.transaction.monitor.check.interval` (2 s by default), so a query that ends
+    before the first check is never stopped: the old 50 million range finished first on a fast CI runner (#53).
+    A billion-row filter takes minutes on any machine, and the stop must come within a few checks.
+    """
+    started = time.monotonic()
     with pytest.raises(ClientError):
-        neo4j_client.read_with_timeout("UNWIND range(1, 50000000) AS x RETURN count(x) AS n LIMIT 1", seconds=0.05)
+        neo4j_client.read_with_timeout(
+            "UNWIND range(1, 1000000000) AS x WITH x WHERE x % 7 = 0 RETURN count(x) AS n LIMIT 1", seconds=0.5
+        )
+    assert time.monotonic() - started < 15
 
 
 def test_read_with_timeout_sends_the_timeout_to_the_server():
