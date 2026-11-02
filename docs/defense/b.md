@@ -130,15 +130,34 @@ Updated at the end of every session. See the end of docs/roles/b.md for the ques
 - Accuracy, correct refusals, removed claims, tool errors and mean latency come from the returned
   `AgentAnswer`; the JSON preserves per-case evidence. The fake provider tests this scoring pipeline only.
   Its 30/30 result is deliberately labelled `scripted-harness-only`, never real-model accuracy.
-- The real provider instantiates the frozen role C `ShockAgent` without implementing it in role B. On
-  2026-10-28, `ShockAgent.ask` still raised `NotImplementedError`, so no real-model result was invented.
+- The final real-provider run used `qwen2.5:7b` through Ollama on Eliott's RTX 4070 Laptop GPU. `ollama ps`
+  reported `100% GPU`. Two complete 30-case passes both scored 13/30; strict traps scored 6/10. Mean
+  latencies were 4,725.938 ms and 4,759.146 ms (medians 4,474.448 ms and 4,179.036 ms; p95 values
+  10,624.913 ms and 11,361.386 ms). Each pass removed four unsupported claims and recorded two tool
+  errors. `docs/agent_eval.md` contains the per-question outcomes and timings; the local JSON and logs
+  preserve full answers, claims and traces without being committed.
 - Oral summary: B1 makes searches stable and traceable; B2 expands funds into economic constituents; B3
   combines statistical shocks with clearly labelled hypotheses; B4 makes HTTP failure contracts explicit;
   B5 provides a least-privilege proxied stack; B6 measures its cost on a dedicated large graph; B7 measures
   whether the natural-language layer preserves those contracts and refuses unsafe requests.
-- Likely oral question — why not implement the missing agent? Ownership assigns LangGraph to role C and
-  freezes its signature. B must test through a fake until C4/C5 lands, otherwise one PR would silently alter
-  another contributor's responsibility.
-- Likely oral question — what remains before release? Run the real provider once C4/C5 and the local model
-  are available, record model identity and measured metrics, obtain Pollux's review, and merge only with
-  green CI plus the required approval.
+- Likely oral question — why is 13/30 acceptable to report? It is not presented as a target: it is the
+  reproducible measured baseline of the frozen final agent. Reporting failed cases, tool errors and removed
+  claims is the point of the evaluation; replacing them with scripted-provider results would be misleading.
+
+## Final video run sheet (Eliott)
+
+- **API and infrastructure — 1:20.** Show `docker compose ps`, `/api/health`, the Nginx entry point and
+  Swagger. State that Neo4j and GDS are healthy, the API is internal behind Nginx, and Ollama reports
+  `qwen2.5:7b` at `100% GPU`. Never display `.env`, the API key or container environment variables.
+- **Performance — 1:10.** Show `docs/perf.md` and `docs/img/b_profile.png`. Quote only measured figures:
+  ticker lookup changes from `NodeByLabelScan`, 40,002 DB hits to `NodeIndexSeek`, 3 hits; x-ray p50/p95
+  is 155.945/196.972 ms; the 10,000-result shock stress is 736.871/957.107 ms. Explain that DB hits and
+  operator shape are more defensible than cache-sensitive wall time.
+- **Evaluation and engineering — 2:00.** Show the real advice refusal in `docs/img/b_ui_agent.png`, then
+  the two-pass table in `docs/agent_eval.md`: 13/30 twice, 6/10 strict traps twice, four removed claims and
+  two tool errors per pass. Contrast this real-model baseline with the fake provider, which validates only
+  the scoring harness. End on the x-ray and Brent +20% captures: EUR 6,000 over 1,314 companies, then a
+  measured estimated portfolio impact of +EUR 53 / +0.89% across 262 directly hit companies.
+- Record at 1920×1080, 30 fps, with notifications disabled and a clean browser window. The three prepared
+  screenshots are `docs/img/b_ui_xray.png`, `docs/img/b_ui_shock.png` and `docs/img/b_ui_agent.png`.
+  Screen and voice recording remain a manual action requiring Eliott's explicit go-ahead.
