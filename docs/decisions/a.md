@@ -139,3 +139,6 @@ all true on reading**, 1 confirmed (SLB → TotalEnergies, 0.95). Precision firs
 - 2026-10-27 · The 3 ETFs marked "to check" were verified on the issuers' documents: PCEU 0.15 % synthetic (Amundi
   factsheet 30/09/2026, unchanged); ETZ **0.19 % synthetic** (BNP Paribas AM KID 16/04/2026; it was wrongly 0.20 %
   physical); VWCE **0.14 %** physical by sampling (Vanguard factsheet 30/09/2026; it was 0.19 %).
+- 2026-10-30 · A4 · The final-RETURN LIMIT rule runs on the top level of every UNION branch (the inside of `{...}`
+  emptied), after Saty's fourth review. Generated Cypher runs through `Neo4jClient.read_with_timeout` (server-side
+  timeout, 5 s by default): LIMIT bounds rows, not work, and only the database can bound the work.

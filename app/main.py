@@ -10,7 +10,7 @@ from neo4j.exceptions import ServiceUnavailable
 
 from app.config import get_settings
 from app.database.neo4j import Neo4jClient
-from app.routers import agent, companies, health, hypotheses, network, portfolio
+from app.routers import agent, companies, health, hypotheses, network, portfolio, ui
 
 DESCRIPTION = """
 **ShockGraph PEA** maps PEA-eligible stocks, sectors, commodities, currencies and rates as a graph,
@@ -32,7 +32,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="ShockGraph PEA", version=get_settings().app_version, description=DESCRIPTION, lifespan=lifespan)
 
-for module in (health, companies, portfolio, network, hypotheses, agent):
+for module in (health, companies, portfolio, network, hypotheses, agent, ui):
     app.include_router(module.router)
 
 

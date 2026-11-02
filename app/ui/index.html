@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ShockGraph PEA</title>
+  <link rel="stylesheet" href="/ui/ui.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">◆</span>
+    <div>
+      <h1>ShockGraph PEA</h1>
+      <p class="tagline">If oil goes up 20 %, what happens to my PEA, and through which links?</p>
+    </div>
+  </div>
+  <div class="status" id="status" title="GET /api/health">checking…</div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" data-tab="portfolio" class="active">1 · Portfolio</button>
+  <button role="tab" data-tab="shock">2 · Shock</button>
+  <button role="tab" data-tab="path">3 · Why this link?</button>
+  <button role="tab" data-tab="network">4 · Network</button>
+  <button role="tab" data-tab="ask">5 · Ask the agent</button>
+</nav>
+
+<main>
+  <!-- Positions are shared by the portfolio and shock tabs. -->
+  <section class="card positions">
+    <div class="row between">
+      <h2>My positions</h2>
+      <div class="row">
+        <button class="ghost" id="preset-student">Student portfolio</button>
+        <button class="ghost" id="clear-positions">Clear</button>
+      </div>
+    </div>
+    <table class="grid" id="positions-table">
+      <thead><tr><th>Line</th><th>ISIN</th><th class="num">Amount (€)</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="row add">
+      <select id="etf-select" aria-label="Add an ETF"><option value="">+ ETF…</option></select>
+      <div class="search">
+        <input id="company-search" placeholder="+ stock: type a name or ticker (e.g. Airbus)" autocomplete="off">
+        <ul id="company-results" class="dropdown" hidden></ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 1 · Portfolio x-ray -->
+  <section class="tab-panel" id="tab-portfolio">
+    <div class="row between">
+      <p class="hint">Look-through: <code>Fund -TRACKS-&gt; Index -CONSTITUENT-&gt; Company</code>, aggregated in euros.
+        The portfolio is never stored.</p>
+      <button class="primary" id="run-xray">Run the x-ray</button>
+    </div>
+    <div id="xray-out"></div>
+  </section>
+
+  <!-- 2 · Shock -->
+  <section class="tab-panel" id="tab-shock" hidden>
+    <div class="row controls">
+      <label>Factor <select id="shock-factor"></select></label>
+      <label>Move (%) <input id="shock-pct" type="number" value="20" min="-90" max="300" step="1"></label>
+      <label>Depth
+        <select id="shock-depth">
+          <option value="1">1 · direct only</option>
+          <option value="2" selected>2 · + news links</option>
+          <option value="3">3</option>
+        </select>
+      </label>
+      <label>Min r² <input id="shock-r2" type="number" value="0.1" min="0" max="1" step="0.05"></label>
+      <label class="check"><input id="shock-use-positions" type="checkbox" checked> on my positions</label>
+      <button class="primary" id="run-shock">Simulate</button>
+    </div>
+    <p class="legend">
+      <span class="badge fact">fact</span> declared link, direction only
+      <span class="badge estimate">estimate</span> beta from prices × shock
+      <span class="badge prediction">prediction</span> ML model
+      <span class="badge hypothesis">hypothesis</span> from news, never a number
+    </p>
+    <div id="shock-out"></div>
+  </section>
+
+  <!-- 3 · Path -->
+  <section class="tab-panel" id="tab-path" hidden>
+    <div class="row controls">
+      <label>From <input id="path-from" value="Factor:BRENT" size="22"></label>
+      <label>To <input id="path-to" value="Company:NL0000235190" size="26"></label>
+      <label>Max hops <input id="path-hops" type="number" value="4" min="1" max="6"></label>
+      <button class="primary" id="run-path">Explain</button>
+    </div>
+    <p class="hint">Bounded <code>shortestPath</code> (at most 6 hops); each link keeps its truth level.</p>
+    <div id="path-out"></div>
+  </section>
+
+  <!-- 4 · Network -->
+  <section class="tab-panel" id="tab-network" hidden>
+    <div class="row between">
+      <p class="hint">GDS on the residual correlation network: PageRank, Louvain communities, FastRP similarity.</p>
+      <button class="primary" id="run-network">Load the network</button>
+    </div>
+    <div class="cols">
+      <div id="systemic-out"></div>
+      <div id="clusters-out"></div>
+    </div>
+  </section>
+
+  <!-- 5 · Agent -->
+  <section class="tab-panel" id="tab-ask" hidden>
+    <div class="row controls">
+      <label class="grow">API key <input id="api-key" type="password" autocomplete="off"
+        placeholder="X-API-Key (kept in this tab only)"></label>
+    </div>
+    <div class="row presets" id="ask-presets"></div>
+    <div class="row">
+      <input id="ask-question" class="grow" maxlength="500"
+        value="If oil goes up 20 %, which PEA companies are the most exposed, and through which link?">
+      <button class="primary" id="run-ask">Ask</button>
+    </div>
+    <div id="ask-out"></div>
+
+    <h2 class="sep">Cypher guardrail</h2>
+    <p class="hint">What the agent's generated Cypher must pass before it reaches Neo4j.</p>
+    <div class="row presets" id="cypher-presets"></div>
+    <div class="row">
+      <textarea id="cypher" class="grow" rows="3" spellcheck="false"></textarea>
+      <button class="primary" id="run-cypher">Check</button>
+    </div>
+    <div id="cypher-out"></div>
+  </section>
+</main>
+
+<aside class="drawer" id="drawer" hidden>
+  <button class="ghost close" id="drawer-close" aria-label="Close">×</button>
+  <div id="drawer-body"></div>
+</aside>
+
+<footer>
+  Educational and analytical tool. <strong>Not investment advice</strong>: it explains exposures, it never
+  recommends buying or selling. Betas describe the past; correlation is not causation.
+  · <a href="/docs">API (Swagger)</a>
+</footer>
+
+<script src="/ui/ui.js"></script>
+</body>
+</html>

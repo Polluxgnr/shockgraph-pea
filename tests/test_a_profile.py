@@ -1,9 +1,10 @@
 """Tests of the PROFILE / EXPLAIN helpers of Neo4jClient (role A), used by the benchmarks (B6)."""
 
 import pytest
+from neo4j import RoutingControl
 from neo4j.exceptions import ClientError
 
-from app.database.neo4j import plan_operators, plan_total
+from app.database.neo4j import Neo4jClient, plan_operators, plan_total
 
 PLAN = {
     "operatorType": "ProduceResults@neo4j",
@@ -52,3 +53,39 @@ def test_profile_refuses_writes(neo4j_client):
     with pytest.raises(ClientError):
         neo4j_client.profile("CREATE (n:Company {isin: 'ZZPROBE00040'}) RETURN n.isin AS isin")
     assert not neo4j_client.read("MATCH (n:Company {isin: 'ZZPROBE00040'}) RETURN n")
+
+
+@pytest.mark.neo4j
+def test_read_with_timeout_returns_rows(neo4j_client):
+    """Within the time budget it behaves like `read`."""
+    rows = neo4j_client.read_with_timeout(
+        "MATCH (c:Company {isin: $isin}) RETURN c.name AS name", {"isin": "FRTEST000011"}
+    )
+    assert len(rows) == 1
+
+
+@pytest.mark.neo4j
+def test_read_with_timeout_stops_heavy_work(neo4j_client):
+    """A query that passes the guardrail but does a lot of work is stopped by the server, not by the client."""
+    with pytest.raises(ClientError):
+        neo4j_client.read_with_timeout("UNWIND range(1, 50000000) AS x RETURN count(x) AS n LIMIT 1", seconds=0.05)
+
+
+def test_read_with_timeout_sends_the_timeout_to_the_server():
+    """The timeout travels with the query (server side), and the query is routed as a read."""
+    calls = []
+
+    class FakeDriver:  # pylint: disable=too-few-public-methods
+        """Records what execute_query receives."""
+
+        def execute_query(self, query, **kwargs):
+            """Return no record, keep the call."""
+            calls.append((query, kwargs))
+            return [], None, None
+
+    client = Neo4jClient("bolt://localhost:1", "neo4j", "unused")
+    client._driver = FakeDriver()  # pylint: disable=protected-access
+    assert client.read_with_timeout("RETURN 1 AS one", seconds=2.5) == []
+    query, kwargs = calls[0]
+    assert query.timeout == 2.5 and query.text == "RETURN 1 AS one"
+    assert kwargs["routing_"] == RoutingControl.READ
