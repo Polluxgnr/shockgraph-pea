@@ -26,11 +26,11 @@ The video walks through this table from top to bottom.
 | 2 | GDS projection + ≥ 2 algorithms | Louvain, PageRank, FastRP in `app/services/gds.py` | C | [x] |
 | 3 | ML workflow | `ml/`, `docs/ml_report.md` | C | [x] |
 | 4 | LangGraph agent with tools | `app/agent/` | C | [x] |
-| 4 | LLM reliability and guardrails | `app/agent/guardrails.py`, `verifier.py`, `docs/guardrails.md`, `docs/agent_eval.md` | A, C, B | [ ] |
+| 4 | LLM reliability and guardrails | `app/agent/guardrails.py`, `verifier.py`, `docs/guardrails.md`, `docs/agent_eval.md` (real-model run pending) | A, C, B | [x] |
 | 2 | Graph schema diagram | `docs/schema.drawio`, `docs/img/a_schema.png` | A | [x] |
 | 2 | Architecture diagram | `docs/architecture.drawio`, `docs/img/b_architecture.png` | B | [x] |
 | 3 | Modeling rationale + anti-genericity | `docs/modeling.md` | A | [x] |
-| 3 | README + screenshots | `README.md`, `docs/img/` | A | [ ] |
+| 3 | README + screenshots | `README.md` (two-minute tour), `docs/img/` (demo page screenshots from the real stack pending) | A | [ ] |
 | 2 | Demo notebook | `demo.ipynb` | C | [ ] |
 | 2 | `.pylintrc`, pylint ≥ 9.5, `make lint` | `.pylintrc` | A | [x] |
 | 1 | PEP 8, clean structure | black + pylint in CI | all | [x] |
@@ -51,8 +51,12 @@ The video walks through this table from top to bottom.
 
 ## Live part of the video
 
-1. `make help`, `make lint`, `make test`, `make docker-run` (already up), `docker compose ps`.
-2. Swagger: search a company, x-ray of a student portfolio, `BRENT +20` shock with paths.
-3. Neo4j browser: the schema (`CALL db.schema.visualization()`) and one shock path.
-4. Agent: one successful question with its trace; one guardrail rejection (write Cypher or advice request).
-5. GitHub: Insights → Contributors, merged PRs with review comments, Actions green, GHCR package.
+The script is in the two-minute tour of the README; the live parts are recorded on the GPU machine.
+
+1. `docker compose ps`: the 4 services healthy.
+2. Demo page http://localhost: x-ray of the student portfolio, `BRENT +20` shock with truth badges, the path of one
+   line, the network tab, a company's side panel.
+3. Neo4j browser: one ETF looked through, and the `PROFILE` of a ticker lookup.
+4. Agent tab: one question with its claims, removed claims and trace; the advice question refused; the Cypher
+   guardrail refusing a `UNION` without `LIMIT`.
+5. GitHub: Insights → Contributors, merged PRs with review comments, Actions green, GHCR package, `v1.0` release.
