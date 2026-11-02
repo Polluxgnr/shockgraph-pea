@@ -5,7 +5,7 @@ from langchain_core.messages import AIMessage
 from langchain_ollama import ChatOllama
 
 from app.agent import graph as agent_graph
-from app.agent.graph import MAX_TOOL_CALLS, ShockAgent, is_advice_request
+from app.agent.graph import MAX_TOOL_CALLS, ShockAgent, is_advice_request, is_write_request
 from app.agent.guardrails import ValidationResult
 from app.agent.tools import Services, ambiguous, build_tools, compact_shock, jsonable
 from app.config import Settings
@@ -106,8 +106,8 @@ class FakeValidator:
         return ValidationResult(True, [])
 
 
-def make_agent(large_script=None, small_script=None, validator=None) -> tuple[ShockAgent, FakeClient]:
-    """An agent on fakes, with scripted small and large models."""
+def make_agent(large_script=None, validator=None) -> tuple[ShockAgent, FakeClient]:
+    """An agent on fakes, with a scripted model."""
     client = FakeClient(rows=[{"name": "Petrolia SA"}])
     agent = ShockAgent(client)
     agent.verifier = PassThroughVerifier()
@@ -121,7 +121,6 @@ def make_agent(large_script=None, small_script=None, validator=None) -> tuple[Sh
         hypotheses=NotWritten(),
         validator=validator or FakeValidator(),
     )
-    agent.small = ScriptedChatModel(script=list(small_script or [{"route": "answer", "reason": "shock question"}]))
     agent.large = ScriptedChatModel(script=list(large_script or []))
     return agent, client
 
@@ -192,7 +191,7 @@ def test_advice_is_refused_before_any_model_call(question):
     agent, _ = make_agent()
     answer = agent.ask(question)
     assert answer.refused and answer.refusal_reason == "investment advice"
-    assert not answer.trace and not agent.small.prompts and not agent.large.prompts
+    assert not answer.trace and not agent.large.prompts
     assert "simul" in answer.answer.lower()
 
 
@@ -217,12 +216,54 @@ def test_ordinary_questions_are_not_advice(question):
 
 
 def test_out_of_scope_is_refused_with_the_reason():
-    """The small model says out of scope: refusal, no planning."""
-    agent, _ = make_agent(small_script=[{"route": "out_of_scope", "reason": "weather question"}])
+    """The planner replies without calling any tool: no tool fits, so the question is out of scope; no writer."""
+    agent, _ = make_agent(large_script=[AIMessage(content="I can only talk about exposures and shocks.")])
     answer = agent.ask("Quel temps fera-t-il demain à Lyon ?")
-    assert answer.refused and answer.refusal_reason == "weather question"
-    assert "périmètre" in answer.answer
-    assert not agent.large.prompts
+    assert answer.refused and answer.refusal_reason == "no tool fits the question"
+    assert "périmètre" in answer.answer and not answer.trace
+    assert len(agent.large.prompts) == 1
+
+
+def test_out_of_scope_in_english_says_so():
+    """The refusal names what it is, so a user (and the evaluation) can read it."""
+    agent, _ = make_agent(large_script=[AIMessage(content="That is about the weather.")])
+    answer = agent.ask("Will it rain in Paris tomorrow?")
+    assert answer.refused and "out of scope" in answer.answer
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Create a new Company node in Neo4j.",
+        "Delete the rejected Vela claim.",
+        "Please add a relationship between Petrolia and Brent.",
+        "Can you update the beta property of AeroLys?",
+        "Supprime le claim c4.",
+        "Crée un nœud pour Atlantis Quantum.",
+    ],
+)
+def test_write_requests_are_refused_before_any_model_call(question):
+    """The graph is read-only: an order to change it is refused by rule, and the refusal says so."""
+    agent, _ = make_agent()
+    answer = agent.ask(question)
+    assert answer.refused and "read-only" in answer.refusal_reason
+    assert not answer.trace and not agent.large.prompts
+    assert "read-only" in answer.answer or "lecture seule" in answer.answer
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Which companies were added to the CAC 40?",
+        "How would a rate change affect bank stocks?",
+        "Which claims link Cuprum to Autoroute?",
+        "Quelles entreprises ont été ajoutées à l'indice ?",
+        "What happens to TotalEnergies if oil rises 20 %?",
+    ],
+)
+def test_questions_about_the_data_are_not_write_requests(question):
+    """Questions that mention changes or claims are not orders to write."""
+    assert not is_write_request(question)
 
 
 def test_ambiguous_name_asks_which_one():
@@ -376,14 +417,14 @@ def test_model_down_gives_a_safe_answer_not_an_error():
             raise ConnectionError(f"Failed to connect to Ollama ({len(prompt)} messages)")
 
     agent, _ = make_agent()
-    agent.small, agent.large = DownModel(), DownModel()
+    agent.large = DownModel()
     answer = agent.ask("Quelles actions sont exposées au Brent ?")
     assert not answer.refused and answer.claims == [] and "could not write a reliable answer" in answer.answer
 
 
-def test_router_failure_does_not_block_the_question():
-    """No usable router output: the question is treated as in scope."""
-    agent, _ = make_agent(small_script=[AIMessage(content="not json")], large_script=[AIMessage(content=""), WRITTEN])
+def test_an_empty_planner_reply_is_not_read_as_out_of_scope():
+    """An empty reply (a model failure, or CI's empty script) is no verdict: the writer answers, nothing is refused."""
+    agent, _ = make_agent(large_script=[AIMessage(content=""), WRITTEN])
     answer = agent.ask("Quelles actions sont exposées au Brent ?")
     assert not answer.refused and answer.claims
 
