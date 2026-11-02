@@ -81,7 +81,11 @@ and no external script. Each tab calls the public API, so what you see is what `
    an unbounded path, a `UNION` without `LIMIT` and a Unicode dash all refused, each with its reason.
 
 The agent runs a 7B model locally: on a CPU an answer can take minutes (the page counts the seconds, and Nginx stops
-waiting after 3 minutes); on a GPU it takes seconds.
+waiting after 3 minutes); on a GPU it takes about 5 seconds.
+
+| Portfolio x-ray | Brent +20 % shock | Agent |
+| --- | --- | --- |
+| ![Portfolio x-ray of the student portfolio](docs/img/b_ui_xray.png) | ![Brent +20 % shock with truth badges](docs/img/b_ui_shock.png) | ![Agent answer with claims and trace](docs/img/b_ui_agent.png) |
 
 ## Architecture
 
@@ -216,7 +220,7 @@ alternatives we rejected and the questions we expect.
 | ML (C3, temporal split) | AUC-PR 0.573 for gradient boosting vs 0.270 for the industry-share baseline; precision@100 1.00; 676 predictions written ([`docs/ml_report.md`](docs/ml_report.md)) |
 | Index effect (20,000 companies) | ticker lookup 40,002 → 3 DB hits; `SKIP` page 200: 60,001 → 8,003 DB hits |
 | Cypher guardrail | 50 refused queries (each with its expected reason), 18 accepted (each `EXPLAIN`-ed on Neo4j); 9 bypasses found in review, each now a test |
-| Agent evaluation | 30 questions including 10 traps (advice, writes, invented company, causation, out of scope). Real model (qwen2.5:7b, CPU): **5/30 with the 3B router, 14/30 and 6/10 traps after the planner took over scope**: [`docs/agent_eval.md`](docs/agent_eval.md) |
+| Agent evaluation | 30 questions including 10 traps (advice, writes, invented company, causation, out of scope). Real model (qwen2.5:7b): **5/30 with the 3B router; after the planner took over scope, 13/30 in both GPU passes (same 13 questions), traps 6/10, about 4.7 s per answer**: [`docs/agent_eval.md`](docs/agent_eval.md) |
 | Tests | 500+ tests (unit, API, Neo4j + GDS, containers, demo page), coverage ≥ 60 % enforced in CI (82 % at the last measure), pylint 10/10 |
 
 ## Limits

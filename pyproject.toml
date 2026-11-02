@@ -1,6 +1,6 @@
 [project]
 name = "shockgraph-pea"
-version = "0.1.0"
+version = "1.0.0"
 description = "Graph of PEA stocks, sectors, commodities and macro factors, with a local LangGraph agent"
 requires-python = ">=3.11"
 
